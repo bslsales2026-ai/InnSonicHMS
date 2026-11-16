@@ -439,21 +439,7 @@ function activeBookingForRoom(roomNum){
 }
 
 // ---------- SETUP ----------
-let setupBlocks = [
-  {autoDetect:false, tower:'No tower / single building', floor:'Ground Floor', type:'Standard Twin', singleRate:4500, doubleRate:5000, numbers:'G01-G16'},
-  {autoDetect:false, tower:'No tower / single building', floor:'1st Floor', type:'Deluxe Twin', singleRate:6000, doubleRate:7000, numbers:'101-120'},
-  {autoDetect:false, tower:'No tower / single building', floor:'2nd Floor', type:'Deluxe Twin', singleRate:6000, doubleRate:7000, numbers:'201-220'},
-  {autoDetect:false, tower:'No tower / single building', floor:'3rd Floor', type:'Deluxe Twin', singleRate:6000, doubleRate:7000, numbers:'301-320'},
-  {autoDetect:false, tower:'No tower / single building', floor:'4th Floor', type:'Deluxe Twin', singleRate:6000, doubleRate:7000, numbers:'401-420'},
-  {autoDetect:false, tower:'No tower / single building', floor:'3rd Floor', type:'Deluxe Triple', singleRate:7000, doubleRate:9000, numbers:'321-326'},
-  {autoDetect:false, tower:'No tower / single building', floor:'4th Floor', type:'Deluxe Triple', singleRate:7000, doubleRate:9000, numbers:'421-426'},
-  {autoDetect:false, tower:'No tower / single building', floor:'1st Floor', type:'Super Deluxe Twin', singleRate:8000, doubleRate:9000, numbers:'121-126'},
-  {autoDetect:false, tower:'No tower / single building', floor:'2nd Floor', type:'Super Deluxe Twin', singleRate:8000, doubleRate:9000, numbers:'221-226'},
-  {autoDetect:false, tower:'No tower / single building', floor:'5th Floor', type:'Super Deluxe Twin', singleRate:8000, doubleRate:9000, numbers:'517-520'},
-  {autoDetect:false, tower:'No tower / single building', floor:'6th Floor', type:'Super Deluxe Twin', singleRate:8000, doubleRate:9000, numbers:'602-613'},
-  {autoDetect:false, tower:'No tower / single building', floor:'5th Floor', type:'Super Deluxe Queen', singleRate:8000, doubleRate:9000, numbers:'501-516'},
-  {autoDetect:false, tower:'No tower / single building', floor:'6th Floor', type:'Suite', singleRate:12000, doubleRate:12000, numbers:'601, 614'}
-];
+let setupBlocks = [{autoDetect:true, tower:'No tower / single building', floor:'Ground Floor', type:'', singleRate:'', doubleRate:'', numbers:''}];
 
 function renderSetup(){
   const app=document.getElementById('app');
@@ -466,7 +452,7 @@ function renderSetup(){
     <div>
       <button class="primary" id="generateBtn">Generate rooms & continue</button>
     </div>
-    <p class="footnote">154 rooms total for this property. With auto-detect on, one block can span every tower and floor at once — e.g. "1101-1156, 1201-1256, 2101-2156, 2201-2256". A few different-type rooms mixed into a range (e.g. 210, 220 being Suites within 201–220) can go in their own block, or be fixed later from "Edit rooms" on the dashboard.</p>
+    <p class="footnote">Enter Savar's room numbers, types and rates above. With auto-detect on, one block can span every tower and floor at once — e.g. "1101-1156, 1201-1256, 2101-2156, 2201-2256". A few different-type rooms mixed into a range (e.g. 210, 220 being Suites within 201–220) can go in their own block, or be fixed later from "Edit rooms" on the dashboard.</p>
   </div>`;
   renderBlocks();
   document.getElementById('addBlockBtn').onclick=()=>{
