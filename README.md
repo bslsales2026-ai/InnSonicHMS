@@ -10,7 +10,13 @@ Keep all files in the SAME folder on the server.
 | `bci-rooms.html` | Front Desk, BRAC Centre Inn | `bci_` |
 | `conference-banqueting.html` | Conference & Banqueting + Restaurant (all 3 properties) | `venues_` |
 | `firebase-config.js` | The ONE file you edit to go live (shared by all apps) | — |
+| `shared/` | Code shared by the apps: `bsl-storage.js` (test/Firebase storage + sign-in), `front-desk.js`/`.css` (all three front desks), `conference-banqueting.js`/`.css` | — |
 | `index_raj.html` | Redirect from the old BRAC Centre Inn URL to `bci-rooms.html` | — |
+
+## Changing a property
+Each front-desk page only holds its property settings (`BSL_PROPERTY`: name, floor list,
+default room blocks for first-time setup). Fixes to front-desk behaviour go in
+`shared/front-desk.js` once and apply to all three properties.
 
 ## Test mode (current state)
 While `firebase-config.js` still holds the `YOUR_...` placeholders, every app runs in
