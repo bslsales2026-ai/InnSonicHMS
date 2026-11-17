@@ -46,7 +46,7 @@
 
   /* ---------- Firebase mode ---------- */
   function firebaseDb(){
-    var V='10.12.2', base='https://www.gstatic.com/firebasejs/'+V+'/';
+    var V='10.12.2', base='vendor/firebase/'; /* self-hosted copy of https://www.gstatic.com/firebasejs/'+V+'/ */
     return loadScript(base+'firebase-app-compat.js').then(function(){
       return Promise.all([loadScript(base+'firebase-firestore-compat.js'), loadScript(base+'firebase-auth-compat.js')]);
     }).then(function(){
