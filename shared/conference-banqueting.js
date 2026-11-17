@@ -523,6 +523,25 @@ function cbDateLabel(iso){
   return isNaN(d) ? iso : d.toLocaleDateString('en-GB',{weekday:'short', day:'numeric', month:'short'});
 }
 function cbTimeRange(b){ return (b.startTime||'')+(b.endTime?' – '+b.endTime:''); }
+// Venue shifts (the page can override with window.BSL_VENUE_SHIFTS). Times are 24-hour HH:MM.
+const CB_SHIFTS = (Array.isArray(window.BSL_VENUE_SHIFTS) && window.BSL_VENUE_SHIFTS.length) ? window.BSL_VENUE_SHIFTS
+  : [{id:'s1', label:'Shift 1', start:'09:00', end:'17:00'}, {id:'s2', label:'Shift 2', start:'18:00', end:'23:00'}];
+function cbHour(hm){ const [h,m]=(hm||'').split(':').map(Number); if(isNaN(h)) return ''; const ap=h>=12?'pm':'am', hh=((h+11)%12)+1; return hh+(m?':'+String(m).padStart(2,'0'):'')+ap; }
+function cbShiftHours(sh){ return cbHour(sh.start)+'–'+cbHour(sh.end); }
+// Which shifts a booking occupies: any shift its time range overlaps. No times = the whole day.
+function bookingShifts(b){
+  const st=b.startTime||'', en=b.endTime||'';
+  if(!st && !en) return CB_SHIFTS.map(x=>x.id);
+  const a = st || '00:00', z = (en && en>a) ? en : '24:00';
+  return CB_SHIFTS.filter(x=> a < x.end && z > x.start).map(x=>x.id);
+}
+function bookingsOverlap(a,b){
+  const sa=bookingShifts(a), sb=bookingShifts(b);
+  if(sa.some(x=>sb.includes(x))) return true;
+  if(!a.startTime||!b.startTime) return false;
+  const ae=(a.endTime&&a.endTime>a.startTime)?a.endTime:'24:00', be=(b.endTime&&b.endTime>b.startTime)?b.endTime:'24:00';
+  return a.startTime < be && b.startTime < ae;
+}
 let cbView = {when:'upcoming', state:'all', space:'all', q:'', boardDate:null, boardType:'all'};
 try{ const v=JSON.parse(localStorage.getItem('cb_view')||'null'); if(v){ cbView.when=v.when||cbView.when; cbView.state=v.state||'all'; cbView.boardType=v.boardType||'all'; } }catch(e){}
 function cbSave(){ try{ localStorage.setItem('cb_view', JSON.stringify({when:cbView.when, state:cbView.state, boardType:cbView.boardType})); }catch(e){} }
@@ -647,7 +666,7 @@ function eventCardHTML(b){
     </button>`;
 }
 
-// ---------- EVENTS: venue board (one card per hall for a chosen day) ----------
+// ---------- EVENTS: venue board (one card per hall for a chosen day, split by shift) ----------
 function paintVenueBoard(list){
   const t=todayStr(); const day=cbView.boardDate||t;
   const halls=spacesForCurrent();
@@ -655,7 +674,18 @@ function paintVenueBoard(list){
   if(!types.some(x=>x.id===cbView.boardType)) cbView.boardType='all';
   const dayBookings=list.filter(b=>b.eventDate===day && evState(b)!=='cancelled');
   const shown=halls.filter(h=>cbView.boardType==='all'||(h.type||'Conference')===cbView.boardType);
-  const bookedN=shown.filter(h=>dayBookings.some(b=>b.space===h.id)).length;
+  const past = day < t;
+  // Per hall: bookings in each shift, plus any outside both shifts.
+  const plan = shown.map(h=>{
+    const bs=dayBookings.filter(b=>b.space===h.id).sort((a,b)=>(a.startTime||'').localeCompare(b.startTime||''));
+    const byShift={}; CB_SHIFTS.forEach(x=>byShift[x.id]=bs.filter(b=>bookingShifts(b).includes(x.id)));
+    const other=bs.filter(b=>bookingShifts(b).length===0);
+    const allDay = CB_SHIFTS.length>1 ? bs.filter(b=>bookingShifts(b).length===CB_SHIFTS.length) : [];
+    const free=CB_SHIFTS.filter(x=>!byShift[x.id].length);
+    const state = free.length===CB_SHIFTS.length && !other.length ? 'vacant' : (free.length===0 ? 'occupied' : 'partial');
+    return {h, byShift, other, free, state, allDay};
+  });
+  const n={vacant:0, partial:0, occupied:0}; plan.forEach(p=>n[p.state]++);
   const tabs=document.getElementById('cbTabs');
   tabs.innerHTML = types.map(x=>`<button class="fd-tab ${cbView.boardType===x.id?'active':''}" role="tab" aria-selected="${cbView.boardType===x.id}" data-btype="${escH(x.id)}">${escH(x.label)}<span class="fd-tab-count">${halls.filter(h=>x.id==='all'||(h.type||'Conference')===x.id).length}</span></button>`).join('');
   tabs.querySelectorAll('[data-btype]').forEach(btn=>{ btn.onclick=()=>{ cbView.boardType=btn.dataset.btype; cbSave(); paintVenueBoard(list); }; });
@@ -665,8 +695,9 @@ function paintVenueBoard(list){
       <input type="date" id="cbDay" value="${day}" aria-label="Day">
       <button class="ghost" id="cbNext" aria-label="Next day">›</button>
       ${day!==t?`<button class="link" id="cbToday">Back to today</button>`:''}
-      <span class="cb-daysum"><b>${escH(cbDateLabel(day))}</b> · <span class="ok">${shown.length-bookedN} available</span> · <span class="busy">${bookedN} booked</span></span>
-    </div>`;
+      <span class="cb-daysum"><b>${escH(cbDateLabel(day))}</b> · <span class="ok">${n.vacant} free all day</span> · <span class="part">${n.partial} partly booked</span> · <span class="busy">${n.occupied} fully booked</span></span>
+    </div>
+    <div class="cb-shiftkey">${CB_SHIFTS.map(x=>`<span><b>${escH(x.label)}</b> ${escH(cbShiftHours(x))}</span>`).join('')}</div>`;
   const go=(d)=>{ cbView.boardDate=d; paintVenueBoard(list); };
   document.getElementById('cbPrev').onclick=()=>go(cbAddDays(day,-1));
   document.getElementById('cbNext').onclick=()=>go(cbAddDays(day,1));
@@ -674,18 +705,25 @@ function paintVenueBoard(list){
   const td=document.getElementById('cbToday'); if(td) td.onclick=()=>go(t);
   const body=document.getElementById('cbBody');
   if(!shown.length){ body.innerHTML=`<div class="fd-empty"><b>No venues of this type</b></div>`; return; }
-  const past = day < t;
-  body.innerHTML = `<div class="grid vgrid">${shown.map(h=>{
-    const bs=dayBookings.filter(b=>b.space===h.id).sort((a,b)=>(a.startTime||'').localeCompare(b.startTime||''));
-    const st = bs.length ? 'occupied' : 'vacant';
-    return `<div class="room vcard ${st}">
-      <div class="room-head"><span class="vname">${escH(h.name)}</span><span class="st-badge">${bs.length?(bs.length>1?bs.length+' bookings':'Booked'):'Available'}</span></div>
-      <div class="type">${escH(h.type||'')}${h.capacity?' · up to '+escH(h.capacity)+' guests':''}</div>
-      ${bs.length ? bs.map(b=>`<button type="button" class="vslot" data-event="${b.id}"><b>${escH(b.clientName||'Booking')}</b><span>${escH(cbTimeRange(b)||'Time not set')}${b.attendees?' · '+escH(b.attendees)+' guests':''}</span></button>`).join('')
-        : `<div class="when">${fmt(h.rate)} per shift</div>${past?'':`<button type="button" class="vbook" data-book="${h.id}">+ Book for ${escH(cbDateLabel(day).replace(/^(Today|Tomorrow)$/, m=>m.toLowerCase()))}</button>`}`}
+  const slotBtn=b=>`<button type="button" class="vslot" data-event="${b.id}"><b>${escH(b.clientName||'Booking')}</b><span>${escH(cbTimeRange(b)||'Whole day (no time set)')}${b.attendees?' · '+escH(b.attendees)+' guests':''}</span></button>`;
+  body.innerHTML = `<div class="grid vgrid">${plan.map(p=>{
+    const badge = p.state==='vacant' ? 'Available' : p.state==='occupied' ? 'Booked' : escH(p.free.map(x=>x.label).join(' & '))+' free';
+    return `<div class="room vcard ${p.state}">
+      <div class="room-head"><span class="vname">${escH(p.h.name)}</span><span class="st-badge">${badge}</span></div>
+      <div class="type">${escH(p.h.type||'')}${p.h.capacity?' · up to '+escH(p.h.capacity)+' guests':''} · ${fmt(p.h.rate)} per shift</div>
+      <div class="vshifts">
+        ${p.allDay.length ? `<div class="vshift busy"><div class="vshift-label"><b>All day</b><span>${escH(CB_SHIFTS.map(x=>x.label).join(' + '))}</span></div><div class="vshift-body">${p.allDay.map(slotBtn).join('')}</div></div>` : ''}
+        ${CB_SHIFTS.map(x=>{ const bs=p.byShift[x.id].filter(b=>!p.allDay.includes(b)); if(p.allDay.length && !bs.length) return ''; return `
+          <div class="vshift ${bs.length?'busy':'free'}">
+            <div class="vshift-label"><b>${escH(x.label)}</b><span>${escH(cbShiftHours(x))}</span></div>
+            <div class="vshift-body">${bs.length ? bs.map(slotBtn).join('')
+              : (past ? `<span class="vfree">Was free</span>` : `<span class="vfree">Free</span><button type="button" class="vbook" data-book="${p.h.id}" data-shift="${x.id}">+ Book</button>`)}</div>
+          </div>`; }).join('')}
+        ${p.other.length ? `<div class="vshift busy"><div class="vshift-label"><b>Other time</b><span>outside shifts</span></div><div class="vshift-body">${p.other.map(slotBtn).join('')}</div></div>` : ''}
+      </div>
     </div>`; }).join('')}</div>`;
   body.querySelectorAll('[data-event]').forEach(el=>{ el.onclick=()=>{ const b=eventBookings.find(x=>x.id===el.dataset.event); if(b) openEventDetail(b); }; });
-  body.querySelectorAll('[data-book]').forEach(el=>{ el.onclick=()=>openNewEventBooking({space:el.dataset.book, date:day}); });
+  body.querySelectorAll('[data-book]').forEach(el=>{ el.onclick=()=>{ const sh=CB_SHIFTS.find(x=>x.id===el.dataset.shift); openNewEventBooking({space:el.dataset.book, date:day, start:sh&&sh.start, end:sh&&sh.end}); }; });
 }
 
 function openNewEventBooking(prefill){
@@ -748,6 +786,8 @@ function openNewEventBooking(prefill){
   };
   if(prefill && prefill.space && spaces.some(x=>x.id===prefill.space)) spaceSel.value=prefill.space;
   if(prefill && prefill.date) overlay.querySelector('#evDate').value=prefill.date;
+  if(prefill && prefill.start) overlay.querySelector('#evStart').value=prefill.start;
+  if(prefill && prefill.end) overlay.querySelector('#evEnd').value=prefill.end;
   spaceSel.onchange=applyRate; applyRate();
   overlay.querySelector('.close-x').onclick=()=>overlay.remove();
   overlay.querySelector('#evCancel').onclick=()=>overlay.remove();
@@ -765,6 +805,13 @@ function openNewEventBooking(prefill){
     const company = overlay.querySelector('#evCompany').value.trim();
     const po = overlay.querySelector('#evPO').value.trim();
     if(payMethod==='credit' && (!company || !po)){ showToast('Company name and an authorization (PO) number are required for corporate billing'); return; }
+    const draft={space:spaceSel.value, eventDate, startTime:overlay.querySelector('#evStart').value||'', endTime:overlay.querySelector('#evEnd').value||''};
+    const clash=eventBookings.filter(x=>x.space===draft.space && x.eventDate===eventDate && evState(x)!=='cancelled' && bookingsOverlap(x,draft));
+    if(clash.length){
+      const hall=(spaces.find(x=>x.id===draft.space)||{}).name||'This hall';
+      const lines=clash.map(x=>'• '+(x.clientName||'Booking')+' ('+(cbTimeRange(x)||'whole day')+')').join('\n');
+      if(!(await customConfirm(hall+' is already booked at that time on '+eventDate+':\n'+lines+'\n\nSave this booking anyway?'))) return;
+    }
     const btn=overlay.querySelector('#evSubmit'); btn.disabled=true; btn.textContent='Saving…';
     const id='ev_'+Date.now();
     await db.doc('eventBookings/'+id).set({
