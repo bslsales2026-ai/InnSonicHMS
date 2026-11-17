@@ -17,5 +17,6 @@ window.BSL_FIREBASE = {
   projectId: "innsonichms",
   storageBucket: "innsonichms.appspot.com",
   messagingSenderId: "154848302859",
-  appId: "1:154848302859:web:8c60e269eea07bbfee740e"
+  appId: "1:154848302859:web:8c60e269eea07bbfee740e",
+  measurementId: "G-7C404BQ021" // Google Analytics ID; the apps do not load Analytics
 };
