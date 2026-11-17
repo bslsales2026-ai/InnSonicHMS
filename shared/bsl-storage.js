@@ -44,6 +44,34 @@
     };
   }
 
+  /* Turns a Firebase Auth error into a message staff (and the administrator) can act on.
+     The error code is always shown so problems can be reported precisely. */
+  function authErrorText(e){
+    var code=(e && e.code) || '', msg=(e && e.message) || '';
+    var t;
+    if(/api-key-not-valid|invalid-api-key/.test(code) || /API key not valid|API_KEY_INVALID/i.test(msg))
+      t='The app\u2019s Firebase API key is not valid. Administrator: copy the apiKey again from Firebase console > Project settings > Your apps > Web app into firebase-config.js.';
+    else if(/requests-from-referer|API_KEY_HTTP_REFERRER_BLOCKED/i.test(code+' '+msg))
+      t='This website address is not allowed to use the Firebase API key. Administrator: add '+location.host+' to the key\u2019s website restrictions in Google Cloud console > APIs & Services > Credentials.';
+    else if(/unauthorized-domain|unauthorized-continue-uri/.test(code))
+      t='This website address is not authorised for sign-in. Administrator: add '+location.host+' under Firebase console > Authentication > Settings > Authorized domains.';
+    else if(/operation-not-allowed/.test(code))
+      t='Email/password sign-in is turned off. Administrator: enable it under Firebase console > Authentication > Sign-in method.';
+    else if(/network-request-failed/.test(code))
+      t='Could not reach the sign-in service. Check the internet connection, and that no ad blocker, firewall or office proxy blocks googleapis.com, then try again.';
+    else if(/invalid-credential|wrong-password|user-not-found|invalid-login-credentials/.test(code))
+      t='Email or password is incorrect.';
+    else if(/invalid-email/.test(code))
+      t='That email address is not valid.';
+    else if(/user-disabled/.test(code))
+      t='This staff account has been disabled. Ask your administrator.';
+    else if(/too-many-requests/.test(code))
+      t='Too many attempts. Wait a few minutes, then try again.';
+    else
+      t='Sign-in failed.';
+    return t+(code?' ('+code+')':'');
+  }
+
   /* ---------- Firebase mode ---------- */
   function firebaseDb(){
     var V='10.12.2', base='vendor/firebase/'; /* self-hosted copy of https://www.gstatic.com/firebasejs/'+V+'/ */
@@ -64,10 +92,19 @@
             shown=overlay('<h3 style="margin:0 0 4px;">Staff sign in</h3><div style="font-size:12.5px;color:#666;margin-bottom:8px;">Use the email and password given by your administrator.</div>'+
               '<input id="bslEm" type="email" placeholder="Email" style="'+inputStyle+'"><input id="bslPw" type="password" placeholder="Password" style="'+inputStyle+'">'+
               '<div id="bslErr" style="color:#b00020;font-size:12.5px;min-height:16px;margin-bottom:6px;"></div><button id="bslGo" style="'+btnStyle+'">Sign in</button>');
+            var busy=false;
             var go=function(){
+              if(busy) return;
               var em=shown.querySelector('#bslEm').value.trim(), pw=shown.querySelector('#bslPw').value;
-              shown.querySelector('#bslErr').textContent='';
-              firebase.auth().signInWithEmailAndPassword(em,pw).catch(function(e){ shown.querySelector('#bslErr').textContent='Sign-in failed: check email and password.'; });
+              var errEl=shown.querySelector('#bslErr'), btn=shown.querySelector('#bslGo');
+              errEl.textContent='';
+              if(!em || !pw){ errEl.textContent='Enter your email and password.'; return; }
+              if(navigator.onLine===false){ errEl.textContent='This device is offline. Check the internet connection and try again.'; return; }
+              busy=true; btn.disabled=true; btn.textContent='Signing in\u2026';
+              firebase.auth().signInWithEmailAndPassword(em,pw).catch(function(e){
+                console.error('[BSL] Firebase sign-in failed:', e && e.code, e && e.message);
+                errEl.textContent=authErrorText(e);
+              }).then(function(){ busy=false; btn.disabled=false; btn.textContent='Sign in'; });
             };
             shown.querySelector('#bslGo').onclick=go;
             shown.querySelector('#bslPw').addEventListener('keydown',function(e){ if(e.key==='Enter') go(); });
