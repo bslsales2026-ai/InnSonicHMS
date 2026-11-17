@@ -1,4 +1,4 @@
-# BSL staff apps (app.bracinn.com)
+# BSL staff apps (app.innsonic.com)
 
 Keep all files in the SAME folder on the server.
 
@@ -39,7 +39,7 @@ checking screens, NOT for real staff use.
          }
        }
 
-6. Authentication > Settings > Authorized domains: add `app.bracinn.com`.
+6. Authentication > Settings > Authorized domains: add `app.innsonic.com`.
 7. Upload the updated `firebase-config.js` and reload the apps — staff sign in with
    the email/password you created.
 
