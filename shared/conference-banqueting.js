@@ -132,7 +132,7 @@ function taxBreakdown(amount, category){
 
 // ---------- SUBSCRIPTIONS ----------
 function subscribeAll(){
-  db.collection('spaces').onSnapshot((snap)=>{ spaces=snap.docs.map(d=>({...d.data(), id:d.id})); render(); }, (e)=>showToast('Spaces sync error: '+e.code));
+  db.collection('spaces').onSnapshot((snap)=>{ spaces=snap.docs.map(d=>({...d.data(), id:d.id})); spacesLoaded=true; render(); autoSeedSpaces(); }, (e)=>showToast('Spaces sync error: '+e.code));
   db.collection('menuItems').onSnapshot((snap)=>{ menuItems=snap.docs.map(d=>({...d.data(), id:d.id})); render(); }, (e)=>showToast('Menu sync error: '+e.code));
   db.collection('eventBookings').onSnapshot((snap)=>{ eventBookings=snap.docs.map(d=>({...d.data(), id:d.id})); render(); }, (e)=>showToast('Bookings sync error: '+e.code));
   db.collection('restaurantOrders').onSnapshot((snap)=>{ restaurantOrders=snap.docs.map(d=>({...d.data(), id:d.id})); render(); }, (e)=>showToast('Orders sync error: '+e.code));
@@ -141,8 +141,43 @@ function subscribeAll(){
   db.collection('venuemeta').onSnapshot((snap)=>{
     const m={};
     snap.docs.forEach(d=>{ m[d.id]=d.data(); });
-    venueMeta=m; render();
+    venueMeta=m; venueMetaLoaded=true; render(); autoSeedSpaces();
   }, (e)=>showToast('Settings sync error: '+e.code));
+}
+
+// ---------- DEFAULT HALLS (window.BSL_VENUE_DEFAULTS, set by the page) ----------
+let spacesLoaded=false, venueMetaLoaded=false, seeding=false;
+function venueDefaultsFor(propId){
+  const d=(window.BSL_VENUE_DEFAULTS||{})[propId];
+  return d && Array.isArray(d.spaces) && d.spaces.length ? d : null;
+}
+function defaultSpaceId(propId, name){
+  return 'sp_'+propId+'_'+name.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'');
+}
+// Adds the default halls a property does not have yet (matched by name), then marks the
+// property as seeded so halls staff delete later are not re-added automatically.
+async function seedDefaultSpaces(propId){
+  const d=venueDefaultsFor(propId); if(!d) return 0;
+  const have=new Set(spaces.filter(s=>s.property===propId).map(s=>(s.name||'').trim().toLowerCase()));
+  let added=0;
+  for(const v of d.spaces){
+    if(have.has(v.name.toLowerCase())) continue;
+    await db.doc('spaces/'+defaultSpaceId(propId, v.name)).set({property:propId, name:v.name, type:v.type, capacity:v.capacity||0, rate:v.rate, source:d.source});
+    added++;
+  }
+  await db.doc('venuemeta/'+propId).set({...metaFor(propId), spacesSeeded:true});
+  return added;
+}
+// Runs once both collections have loaded: seeds only properties that have no halls and were never seeded.
+async function autoSeedSpaces(){
+  if(seeding || !spacesLoaded || !venueMetaLoaded) return;
+  const todo=PROPERTIES.map(p=>p.id).filter(id=>venueDefaultsFor(id) && !(venueMeta[id]||{}).spacesSeeded && !spaces.some(s=>s.property===id));
+  if(!todo.length) return;
+  seeding=true;
+  try{
+    for(const id of todo){ const n=await seedDefaultSpaces(id); if(n) showToast(n+(n===1?' hall':' halls')+' added for '+propName(id)+' from the fact sheet'); }
+  }catch(e){ showToast('Could not add default halls: '+(e.code||e.message)); }
+  finally{ seeding=false; }
 }
 
 // ---------- HELPERS: scoped data ----------
@@ -340,7 +375,7 @@ function openEditEvent(b, parentOverlay){
   const overlay=document.createElement('div');
   overlay.className='overlay';
   overlay.style.zIndex='200';
-  const spOpts = spList.map(s=>`<option value="${s.id}" ${s.id===b.space?'selected':''}>${escH(s.name)} (${escH(s.type)}, cap ${s.capacity})</option>`).join('')
+  const spOpts = spList.map(s=>`<option value="${s.id}" ${s.id===b.space?'selected':''}>${escH(s.name)} (${escH(s.type)}${s.capacity?', cap '+s.capacity:''})</option>`).join('')
     + (spList.some(s=>s.id===b.space) ? '' : `<option value="${escH(b.space)}" selected>(current space)</option>`);
   const em = b.expectedPaymentMethod||'';
   overlay.innerHTML=`
@@ -540,7 +575,7 @@ function openNewEventBooking(){
       <div class="sub">${propName(currentProperty)}</div>
       <div class="field"><label>Space</label>
         <select id="evSpace">
-          ${spList.map(s=>`<option value="${s.id}">${s.name} (${s.type}, cap ${s.capacity}) — ${fmt(s.rate)}</option>`).join('')}
+          ${spList.map(s=>`<option value="${s.id}">${s.name} (${s.type}${s.capacity?', cap '+s.capacity:''}) — ${fmt(s.rate)}</option>`).join('')}
         </select>
       </div>
       <div class="field"><label>Client / organiser name</label><input id="evClient" placeholder="Full name / company"></div>
@@ -1631,6 +1666,7 @@ function openManageSpaces(){
         </table>
       </div>
       <button class="ghost" id="addSpaceRow" style="margin-bottom:14px;">+ Add space</button>
+      ${venueDefaultsFor(currentProperty) ? `<button class="ghost" id="addDefaultSpaces" style="margin-bottom:14px;">Add missing halls from ${escH(venueDefaultsFor(currentProperty).source)}</button>` : ''}
       <div class="modal-actions">
         <button class="ghost" id="spClose">Close</button>
         <button class="primary" id="spSave">Save changes</button>
@@ -1649,6 +1685,13 @@ function openManageSpaces(){
       openManageSpaces();
     };
   });
+  const defBtn=overlay.querySelector('#addDefaultSpaces');
+  if(defBtn) defBtn.onclick=async ()=>{
+    defBtn.disabled=true;
+    const n=await seedDefaultSpaces(currentProperty);
+    showToast(n ? n+(n===1?' hall':' halls')+' added' : 'All fact-sheet halls are already listed');
+    overlay.remove(); openManageSpaces();
+  };
   overlay.querySelector('#addSpaceRow').onclick=()=>{
     const tbody=overlay.querySelector('#spacesTable tbody');
     const tr=document.createElement('tr');

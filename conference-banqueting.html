@@ -7,18 +7,46 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="shared/conference-banqueting.css?v=20261117a">
+<link rel="stylesheet" href="shared/conference-banqueting.css?v=20261117b">
 </head>
 <body>
 <div id="app"></div>
 <div id="toast" class="toast"></div>
 <div id="printArea"></div>
 
-<script src="firebase-config.js?v=20261117a" onerror="void 0"></script>
+<script src="firebase-config.js?v=20261117b" onerror="void 0"></script>
 <script>
 window.BSL_PREFIX = 'venues_';
+// Halls added automatically the first time a property has none (and re-addable from
+// "Manage spaces"). Rates are per shift (Shift 1: 9am-5pm, Shift 2: 6pm-11pm), in BDT,
+// before 10% service charge + 15% VAT. Capacity is not on the fact sheet: fill it in from "Manage spaces".
+window.BSL_VENUE_DEFAULTS = {
+  savar: {
+    source: 'BCDM Savar 2026 fact sheet',
+    spaces: [
+      {name:'Auditorium', type:'Conference', rate:70000},
+      {name:'Banquet Hall', type:'Banquet', rate:40000},
+      {name:'Conference Hall 1', type:'Conference', rate:30000},
+      {name:'Conference Hall 2', type:'Conference', rate:30000},
+      {name:'Conference Hall 3', type:'Conference', rate:25000},
+      {name:'Meeting Room 01', type:'Conference', rate:20000},
+      {name:'Meeting Room 02', type:'Conference', rate:20000},
+      {name:'Meeting Room 03', type:'Conference', rate:20000},
+      {name:'Meeting Room 04', type:'Conference', rate:20000},
+      {name:'Meeting Room 05', type:'Conference', rate:20000},
+      {name:'Meeting Room 06', type:'Conference', rate:20000},
+      {name:'Meeting Room 07', type:'Conference', rate:20000},
+      {name:'Meeting Room 08', type:'Conference', rate:20000},
+      {name:'Open Deck', type:'Banquet', rate:25000},
+      {name:'Coffee Shop', type:'Banquet', rate:15000},
+      {name:'Coffee Shop Roof Top', type:'Banquet', rate:10000},
+      {name:'Open Field 1', type:'Banquet', rate:75000},
+      {name:'Open Deck (For Exhibition)', type:'Conference', rate:50000}
+    ]
+  }
+};
 </script>
-<script src="shared/bsl-storage.js?v=20261117a"></script>
-<script src="shared/conference-banqueting.js?v=20261117a"></script>
+<script src="shared/bsl-storage.js?v=20261117b"></script>
+<script src="shared/conference-banqueting.js?v=20261117b"></script>
 </body>
 </html>
