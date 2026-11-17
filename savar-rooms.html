@@ -20,6 +20,7 @@ window.BSL_PREFIX = 'svr_';
 window.BSL_PROPERTY = {
   name: 'BCDM Savar',
   floorOptions: ['Ground Floor', '1st Floor', '2nd Floor', '3rd Floor', '4th Floor', '5th Floor', '6th Floor', 'Other'],
+  // 154 rooms (confirmed): 28 Super Deluxe Twin, the fact sheet's other counts as listed.
   // Room types and rates: BCDM Savar 2026 fact sheet (all rates BDT, before 10% SC + 15% VAT).
   // Deluxe Triple: the "single" field holds the double-occupancy rate (7,000), "double" the triple rate (9,000).
   // Pre-filled on the first-open room setup screen only; staff can edit before generating rooms.
@@ -38,7 +39,7 @@ window.BSL_PROPERTY = {
     {autoDetect:false, tower:'No tower / single building', floor:'5th Floor', type:'Super Deluxe Queen', singleRate:8000, doubleRate:9000, numbers:'501-516'},
     {autoDetect:false, tower:'No tower / single building', floor:'6th Floor', type:'Suite', singleRate:12000, doubleRate:12000, numbers:'601, 614'}
   ],
-  setupNote: "Types and rates are from the BCDM Savar 2026 fact sheet (150 rooms). Check before generating: the room numbers listed give 28 Super Deluxe Twin rooms, but the fact sheet says 24, so remove the 4 that do not exist."
+  setupNote: "154 rooms total for this property, including 28 Super Deluxe Twin rooms. Types and rates are from the BCDM Savar 2026 fact sheet."
 };
 </script>
 <script src="shared/bsl-storage.js?v=20261117a"></script>
