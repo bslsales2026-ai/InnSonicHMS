@@ -206,6 +206,12 @@ function ordersForCurrent(){
 
 // ---------- SHELL / RENDER ----------
 function render(){
+  // Live updates rebuild the page: remember which text box had focus so typing is not interrupted.
+  const ae=document.activeElement, keep = ae && ae.id && /^(INPUT|TEXTAREA)$/.test(ae.tagName) && !ae.closest('.overlay') ? {id:ae.id, pos:ae.selectionStart} : null;
+  renderPage();
+  if(keep){ const el=document.getElementById(keep.id); if(el && el!==document.activeElement){ el.focus(); try{ el.setSelectionRange(keep.pos, keep.pos); }catch(e){} } }
+}
+function renderPage(){
   const app=document.getElementById('app');
   const meta = metaFor(currentProperty);
   const modTabs=[{id:'events', label:'Events'}];
@@ -252,17 +258,18 @@ function render(){
 }
 
 // ---------- EVENTS (CONFERENCE + BANQUET) ----------
-let eventView='active';
+let eventView='board';
+try{ const v=localStorage.getItem('cb_event_view'); if(v==='board'||v==='active'||v==='history') eventView=v; }catch(e){}
 let histF={q:'', status:'all', from:'', to:''};
 function escH(v){ return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function evViewToggleHTML(n){
-  return `<div style="display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap;">
-    <button class="${eventView==='active'?'primary':'ghost'}" data-evview="active">Today &amp; upcoming</button>
-    <button class="${eventView==='history'?'primary':'ghost'}" data-evview="history">All events &amp; history (${n})</button>
+  const t=(id,label)=>`<button class="cb-view ${eventView===id?'active':''}" data-evview="${id}" aria-pressed="${eventView===id}">${label}</button>`;
+  return `<div class="cb-views" role="group" aria-label="Events view">
+    ${t('board','Venue board')}${t('active','Bookings')}${t('history','History &amp; search ('+n+')')}
   </div>`;
 }
 function bindEvViewToggle(main){
-  main.querySelectorAll('[data-evview]').forEach(btn=>{ btn.onclick=()=>{ eventView=btn.dataset.evview; render(); }; });
+  main.querySelectorAll('[data-evview]').forEach(btn=>{ btn.onclick=()=>{ eventView=btn.dataset.evview; try{ localStorage.setItem('cb_event_view', eventView); }catch(e){} render(); }; });
   main.querySelectorAll('[data-evhist]').forEach(btn=>{ btn.onclick=()=>{ eventView='history'; render(); }; });
   main.querySelectorAll('[data-evchip]').forEach(btn=>{ btn.onclick=()=>{ histF={q:'',status:btn.dataset.evchip,from:'',to:''}; eventView='history'; render(); }; });
 }
@@ -492,78 +499,196 @@ function openEditEvent(b, parentOverlay){
   };
 }
 
+// ---------- EVENTS: shared status model ----------
+const CB_STATE = {
+  confirmed: {label:'Confirmed',       badge:'Confirmed'},
+  unbilled:  {label:'Needs billing',   badge:'Needs billing'},
+  pending:   {label:'Payment pending', badge:'Payment due'},
+  billed:    {label:'Billed',          badge:'Billed'},
+  cancelled: {label:'Cancelled',       badge:'Cancelled'}
+};
+function evState(b){
+  if(b.status==='cancelled') return 'cancelled';
+  if(b.status==='closed') return b.paymentStatus==='pending' ? 'pending' : 'billed';
+  return (b.eventDate||'') < todayStr() ? 'unbilled' : 'confirmed';
+}
+function cbAddDays(iso, n){ const d=new Date(iso+'T00:00:00'); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
+function cbDateLabel(iso){
+  if(!iso) return 'No date';
+  const t=todayStr();
+  if(iso===t) return 'Today';
+  if(iso===cbAddDays(t,1)) return 'Tomorrow';
+  if(iso===cbAddDays(t,-1)) return 'Yesterday';
+  const d=new Date(iso+'T00:00:00');
+  return isNaN(d) ? iso : d.toLocaleDateString('en-GB',{weekday:'short', day:'numeric', month:'short'});
+}
+function cbTimeRange(b){ return (b.startTime||'')+(b.endTime?' – '+b.endTime:''); }
+let cbView = {when:'upcoming', state:'all', space:'all', q:'', boardDate:null, boardType:'all'};
+try{ const v=JSON.parse(localStorage.getItem('cb_view')||'null'); if(v){ cbView.when=v.when||cbView.when; cbView.state=v.state||'all'; cbView.boardType=v.boardType||'all'; } }catch(e){}
+function cbSave(){ try{ localStorage.setItem('cb_view', JSON.stringify({when:cbView.when, state:cbView.state, boardType:cbView.boardType})); }catch(e){} }
+const CB_WHEN = [
+  {id:'upcoming', label:'Upcoming',     test:(d,t)=>d>=t},
+  {id:'today',    label:'Today',        test:(d,t)=>d===t},
+  {id:'tomorrow', label:'Tomorrow',     test:(d,t)=>d===cbAddDays(t,1)},
+  {id:'week',     label:'Next 7 days',  test:(d,t)=>d>=t && d<=cbAddDays(t,6)},
+  {id:'later',    label:'Later',        test:(d,t)=>d>cbAddDays(t,6)},
+  {id:'past',     label:'Past',         test:(d,t)=>!!d && d<t},
+  {id:'all',      label:'All dates',    test:()=>true}
+];
+
 function renderEvents(main){
   const list = eventsForCurrent();
-  const today = todayStr();
-  const upcoming = list.filter(b=>b.status!=='closed' && b.status!=='cancelled' && (b.eventDate||'')>=today);
-  const today_ = list.filter(b=>b.status!=='closed' && b.status!=='cancelled' && b.eventDate===today);
-  const past = list.filter(b=>b.status==='closed' || (b.status!=='cancelled' && (b.eventDate||'')<today));
-  const byDateDesc=(a,b)=>(b.eventDate||'').localeCompare(a.eventDate||'');
-  const pastUnbilled = list.filter(b=>b.status!=='closed' && b.status!=='cancelled' && (b.eventDate||'')<today).sort(byDateDesc);
-  const closedL = list.filter(b=>b.status==='closed').sort(byDateDesc);
-  const cancelledL = list.filter(b=>b.status==='cancelled').sort(byDateDesc);
-  const pendingPay = closedL.filter(b=>b.paymentStatus==='pending').length;
-  const chip=(label,n,st,color)=>`<button class="ghost" data-evchip="${st}" style="padding:6px 12px; font-size:12.5px; ${color?'color:'+color+';':''}">${label}: <b>${n}</b></button>`;
-  const spacesAvailable = spacesForCurrent().length>0;
   if(eventView==='history'){ renderEventHistory(main, list); return; }
-
+  const spacesAvailable = spacesForCurrent().length>0;
   main.innerHTML = `
     ${evViewToggleHTML(list.length)}
-    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
-      ${chip('Confirmed',list.filter(b=>b.status!=='closed'&&b.status!=='cancelled').length,'confirmed','var(--rest)')}
-      ${chip('Past, not billed',pastUnbilled.length,'unbilled',pastUnbilled.length?'var(--warn)':'')}
-      ${chip('Closed',closedL.length,'closed')}
-      ${chip('Payment pending',pendingPay,'pending',pendingPay?'var(--warn)':'')}
-      ${chip('Cancelled',cancelledL.length,'cancelled','var(--banq)')}
-    </div>
-    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
-      <div style="color:var(--ink-soft); font-size:13px;">${spacesForCurrent().length} space${spacesForCurrent().length===1?'':'s'} set up for ${propName(currentProperty)}</div>
-      <button class="primary" id="newEventBtn" ${spacesAvailable?'':'disabled'}>+ New booking</button>
-    </div>
+    <div class="fd-summary" id="cbSummary" role="group" aria-label="Filter bookings by status"></div>
     ${!spacesAvailable ? `
       <div class="empty-state" style="margin-top:16px;">
         <h3>No conference or banquet spaces yet</h3>
         <p>Add this property's halls before taking bookings.</p>
         <button class="primary" id="addSpacesBtn" style="margin-top:10px;">Add spaces</button>
-      </div>` : ''}
-    ${today_.length ? `<div class="section-title">Today</div><div class="cards">${today_.map(eventCardHTML).join('')}</div>` : ''}
-    ${upcoming.filter(b=>b.eventDate!==today).length ? `<div class="section-title">Upcoming</div><div class="cards">${upcoming.filter(b=>b.eventDate!==today).map(eventCardHTML).join('')}</div>` : ''}
-    ${pastUnbilled.length ? `<div class="section-title">Past events — not yet closed &amp; billed</div><div class="cards">${pastUnbilled.map(eventCardHTML).join('')}</div>` : ''}
-    ${closedL.length ? `<div class="section-title">Closed / billed</div><div class="cards">${closedL.map(eventCardHTML).join('')}</div>` : ''}
-    ${cancelledL.length ? `<div class="section-title">Cancelled</div><div class="cards">${cancelledL.map(eventCardHTML).join('')}</div>` : ''}
-    ${list.length===0 && spacesAvailable ? `<div class="empty-state" style="margin-top:16px;"><h3>No bookings yet</h3><p>Create the first conference or banquet booking for ${propName(currentProperty)}.</p></div>` : ''}
+      </div>` : `
+      <div class="fd-toolbar">
+        <div class="fd-tabs" id="cbTabs" role="tablist"></div>
+        <div class="cb-tools">
+          ${eventView==='active' ? `<select id="cbSpace" class="fd-search cb-select" aria-label="Venue"><option value="all">All venues</option>${spacesForCurrent().map(sp=>`<option value="${sp.id}" ${cbView.space===sp.id?'selected':''}>${escH(sp.name)}</option>`).join('')}</select>
+          <input id="cbSearch" class="fd-search" type="search" placeholder="Find client, company, phone…" value="${escH(cbView.q)}" aria-label="Search bookings">` : ''}
+          <button class="primary" id="newEventBtn">+ New booking</button>
+        </div>
+      </div>
+      <div id="cbNote" class="fd-filter-note"></div>
+      <div id="cbBody"></div>`}
   `;
   bindEvViewToggle(main);
-  const newBtn=document.getElementById('newEventBtn');
-  if(newBtn) newBtn.onclick=openNewEventBooking;
-  const addSpacesBtn=document.getElementById('addSpacesBtn');
-  if(addSpacesBtn) addSpacesBtn.onclick=openManageSpaces;
-  main.querySelectorAll('[data-event]').forEach(el=>{
-    el.onclick=()=>{
-      const b = eventBookings.find(x=>x.id===el.dataset.event);
-      if(b) openEventDetail(b);
+  const addSpacesBtn=document.getElementById('addSpacesBtn'); if(addSpacesBtn) addSpacesBtn.onclick=openManageSpaces;
+  paintEventSummary(list);
+  if(!spacesAvailable) return;
+  document.getElementById('newEventBtn').onclick=()=>openNewEventBooking();
+  if(eventView==='board'){ paintVenueBoard(list); return; }
+  const sp=document.getElementById('cbSpace'); sp.onchange=()=>{ cbView.space=sp.value; paintBookings(list); };
+  const q=document.getElementById('cbSearch'); q.oninput=()=>{ cbView.q=q.value; paintBookings(list); };
+  paintBookings(list);
+}
+
+function paintEventSummary(list){
+  const c={}; Object.keys(CB_STATE).forEach(k=>c[k]=0);
+  list.forEach(b=>c[evState(b)]++);
+  const t=todayStr(), todayN=list.filter(b=>b.eventDate===t && evState(b)!=='cancelled').length;
+  const pendAmt=list.filter(b=>evState(b)==='pending').reduce((a,b)=>a+(b.totalBill||eventTotals(b).grand||0),0);
+  const box=document.getElementById('cbSummary');
+  box.innerHTML = Object.keys(CB_STATE).map(k=>`
+    <button class="fd-stat cb-${k} ${cbView.state===k?'active':''}" data-state="${k}" aria-pressed="${cbView.state===k}">
+      <span class="fd-dot"></span><b>${c[k]}</b><small>${CB_STATE[k].label}</small>
+    </button>`).join('') + `
+    <div class="fd-stat info"><b>${todayN}</b><small>Event${todayN===1?'':'s'} today</small></div>
+    ${pendAmt?`<div class="fd-stat info revenue"><b>${fmt(pendAmt)}</b><small>Due from companies</small></div>`:''}`;
+  box.querySelectorAll('[data-state]').forEach(btn=>{
+    btn.onclick=()=>{
+      cbView.state = cbView.state===btn.dataset.state ? 'all' : btn.dataset.state;
+      // A status filter is about bookings, so leave the venue board for the list.
+      if(eventView==='board' && cbView.state!=='all'){ eventView='active'; try{ localStorage.setItem('cb_event_view','active'); }catch(e){} cbView.when = (cbView.state==='confirmed') ? 'upcoming' : 'all'; }
+      cbSave(); render();
     };
   });
 }
 
-function eventCardHTML(b){
-  const sp = spaces.find(s=>s.id===b.space);
-  const typeClass = (sp&&sp.type==='Banquet') ? 'banquet' : 'conference';
-  const statusLabel = b.status==='closed'?'closed':(b.status==='cancelled'?'cancelled':(b.status||'tentative'));
-  return `
-    <div class="card ${typeClass}" data-event="${b.id}">
-      <div class="top-row">
-        <div>
-          <div class="title">${b.clientName}</div>
-          <div class="sub">${sp?sp.name:'(space removed)'} · ${b.eventDate||''}</div>
-        </div>
-        <span class="tag ${statusLabel}">${statusLabel}</span>
-      </div>
-      <div class="meta">${b.startTime||''}${b.endTime?' – '+b.endTime:''} · ${b.attendees||'—'} guests</div>
-    </div>`;
+function paintBookings(list){
+  const t=todayStr();
+  // Cancelled bookings only show when that status is picked, so they don't clutter the date tabs.
+  const base=list.filter(b=>(cbView.space==='all'||b.space===cbView.space) && (cbView.state==='all' ? evState(b)!=='cancelled' : evState(b)===cbView.state));
+  const qq=cbView.q.trim().toLowerCase();
+  const searched = !qq ? base : base.filter(b=>{ const sp=spaces.find(x=>x.id===b.space); return [b.clientName,b.phone,b.billToCompany,b.billRef,sp&&sp.name,b.notes].join(' ').toLowerCase().includes(qq); });
+  const tabs=document.getElementById('cbTabs');
+  tabs.innerHTML = CB_WHEN.map(w=>`<button class="fd-tab ${cbView.when===w.id?'active':''}" role="tab" aria-selected="${cbView.when===w.id}" data-when="${w.id}">${w.label}<span class="fd-tab-count">${searched.filter(b=>w.test(b.eventDate||'',t)).length}</span></button>`).join('');
+  tabs.querySelectorAll('[data-when]').forEach(btn=>{ btn.onclick=()=>{ cbView.when=btn.dataset.when; cbSave(); paintBookings(list); }; });
+  const w=CB_WHEN.find(x=>x.id===cbView.when)||CB_WHEN[0];
+  const rows=searched.filter(b=>w.test(b.eventDate||'',t));
+  const asc = !['past','all'].includes(w.id);
+  rows.sort((a,b)=>asc ? ((a.eventDate||'').localeCompare(b.eventDate||'') || (a.startTime||'').localeCompare(b.startTime||'')) : ((b.eventDate||'').localeCompare(a.eventDate||'')));
+
+  const parts=[];
+  if(cbView.state!=='all') parts.push(CB_STATE[cbView.state].label);
+  if(cbView.space!=='all'){ const sp=spaces.find(x=>x.id===cbView.space); if(sp) parts.push(escH(sp.name)); }
+  if(qq) parts.push('“'+escH(cbView.q.trim())+'”');
+  const note=document.getElementById('cbNote');
+  note.innerHTML = parts.length ? `Showing: ${parts.join(' · ')} <button class="link" id="cbClear">Clear filters</button>` : '';
+  const clr=document.getElementById('cbClear');
+  if(clr) clr.onclick=()=>{ cbView.state='all'; cbView.space='all'; cbView.q=''; cbSave(); render(); };
+
+  const body=document.getElementById('cbBody');
+  if(!rows.length){ body.innerHTML=`<div class="fd-empty"><b>No bookings here</b><span>Try another date tab or status, or clear the filters.</span></div>`; return; }
+  const groups={}; const order=[];
+  rows.forEach(b=>{ const k=b.eventDate||''; if(!groups[k]){ groups[k]=[]; order.push(k); } groups[k].push(b); });
+  body.innerHTML = order.map(k=>`<section class="floor-group"><p class="floor-title">${escH(cbDateLabel(k))}${k&&cbDateLabel(k)!==k?` <span>${escH(k)}</span>`:''} <span>· ${groups[k].length} booking${groups[k].length===1?'':'s'}</span></p><div class="cb-grid">${groups[k].map(eventCardHTML).join('')}</div></section>`).join('');
+  body.querySelectorAll('[data-event]').forEach(el=>{ el.onclick=()=>{ const b=eventBookings.find(x=>x.id===el.dataset.event); if(b) openEventDetail(b); }; });
 }
 
-function openNewEventBooking(){
+function eventCardHTML(b){
+  const sp = spaces.find(s=>s.id===b.space);
+  const st = evState(b);
+  const amt = st==='billed'||st==='pending' ? (b.totalBill||eventTotals(b).grand) : eventGross(b);
+  const time = cbTimeRange(b);
+  return `
+    <button type="button" class="ecard ${st}" data-event="${b.id}" aria-label="${escH(b.clientName)}, ${escH(sp?sp.name:'')}, ${escH(cbDateLabel(b.eventDate))}, ${CB_STATE[st].label}">
+      <div class="ecard-head">
+        <span class="ecard-title">${escH(b.clientName||'Unnamed client')}</span>
+        <span class="st-badge">${CB_STATE[st].badge}</span>
+      </div>
+      <div class="ecard-venue">${escH(sp?sp.name:'(space removed)')}${sp?` <span class="vtype ${sp.type==='Banquet'?'banquet':'conference'}">${escH(sp.type)}</span>`:''}</div>
+      <div class="ecard-meta">
+        <span>${escH(cbDateLabel(b.eventDate))}${time?' · '+escH(time):''}</span>
+        <span>${b.attendees?escH(b.attendees)+' guests':'Guests —'}</span>
+      </div>
+      <div class="ecard-foot">
+        <span>${st==='pending'&&b.billToCompany?'Bill to '+escH(b.billToCompany):(b.phone?escH(b.phone):'')}</span>
+        <b>${st==='cancelled'?'—':fmt(amt)}</b>
+      </div>
+    </button>`;
+}
+
+// ---------- EVENTS: venue board (one card per hall for a chosen day) ----------
+function paintVenueBoard(list){
+  const t=todayStr(); const day=cbView.boardDate||t;
+  const halls=spacesForCurrent();
+  const types=[{id:'all',label:'All venues'}].concat([...new Set(halls.map(h=>h.type||'Conference'))].sort().map(x=>({id:x,label:x+' halls'})));
+  if(!types.some(x=>x.id===cbView.boardType)) cbView.boardType='all';
+  const dayBookings=list.filter(b=>b.eventDate===day && evState(b)!=='cancelled');
+  const shown=halls.filter(h=>cbView.boardType==='all'||(h.type||'Conference')===cbView.boardType);
+  const bookedN=shown.filter(h=>dayBookings.some(b=>b.space===h.id)).length;
+  const tabs=document.getElementById('cbTabs');
+  tabs.innerHTML = types.map(x=>`<button class="fd-tab ${cbView.boardType===x.id?'active':''}" role="tab" aria-selected="${cbView.boardType===x.id}" data-btype="${escH(x.id)}">${escH(x.label)}<span class="fd-tab-count">${halls.filter(h=>x.id==='all'||(h.type||'Conference')===x.id).length}</span></button>`).join('');
+  tabs.querySelectorAll('[data-btype]').forEach(btn=>{ btn.onclick=()=>{ cbView.boardType=btn.dataset.btype; cbSave(); paintVenueBoard(list); }; });
+  document.getElementById('cbNote').innerHTML = `
+    <div class="cb-daybar">
+      <button class="ghost" id="cbPrev" aria-label="Previous day">‹</button>
+      <input type="date" id="cbDay" value="${day}" aria-label="Day">
+      <button class="ghost" id="cbNext" aria-label="Next day">›</button>
+      ${day!==t?`<button class="link" id="cbToday">Back to today</button>`:''}
+      <span class="cb-daysum"><b>${escH(cbDateLabel(day))}</b> · <span class="ok">${shown.length-bookedN} available</span> · <span class="busy">${bookedN} booked</span></span>
+    </div>`;
+  const go=(d)=>{ cbView.boardDate=d; paintVenueBoard(list); };
+  document.getElementById('cbPrev').onclick=()=>go(cbAddDays(day,-1));
+  document.getElementById('cbNext').onclick=()=>go(cbAddDays(day,1));
+  document.getElementById('cbDay').onchange=(e)=>{ if(e.target.value) go(e.target.value); };
+  const td=document.getElementById('cbToday'); if(td) td.onclick=()=>go(t);
+  const body=document.getElementById('cbBody');
+  if(!shown.length){ body.innerHTML=`<div class="fd-empty"><b>No venues of this type</b></div>`; return; }
+  const past = day < t;
+  body.innerHTML = `<div class="grid vgrid">${shown.map(h=>{
+    const bs=dayBookings.filter(b=>b.space===h.id).sort((a,b)=>(a.startTime||'').localeCompare(b.startTime||''));
+    const st = bs.length ? 'occupied' : 'vacant';
+    return `<div class="room vcard ${st}">
+      <div class="room-head"><span class="vname">${escH(h.name)}</span><span class="st-badge">${bs.length?(bs.length>1?bs.length+' bookings':'Booked'):'Available'}</span></div>
+      <div class="type">${escH(h.type||'')}${h.capacity?' · up to '+escH(h.capacity)+' guests':''}</div>
+      ${bs.length ? bs.map(b=>`<button type="button" class="vslot" data-event="${b.id}"><b>${escH(b.clientName||'Booking')}</b><span>${escH(cbTimeRange(b)||'Time not set')}${b.attendees?' · '+escH(b.attendees)+' guests':''}</span></button>`).join('')
+        : `<div class="when">${fmt(h.rate)} per shift</div>${past?'':`<button type="button" class="vbook" data-book="${h.id}">+ Book for ${escH(cbDateLabel(day).replace(/^(Today|Tomorrow)$/, m=>m.toLowerCase()))}</button>`}`}
+    </div>`; }).join('')}</div>`;
+  body.querySelectorAll('[data-event]').forEach(el=>{ el.onclick=()=>{ const b=eventBookings.find(x=>x.id===el.dataset.event); if(b) openEventDetail(b); }; });
+  body.querySelectorAll('[data-book]').forEach(el=>{ el.onclick=()=>openNewEventBooking({space:el.dataset.book, date:day}); });
+}
+
+function openNewEventBooking(prefill){
   const spList = spacesForCurrent();
   if(spList.length===0){ showToast('Add a space first'); return; }
   const overlay=document.createElement('div');
@@ -621,6 +746,8 @@ function openNewEventBooking(){
     const s = spaces.find(x=>x.id===spaceSel.value);
     if(s) overlay.querySelector('#evRate').value = s.rate;
   };
+  if(prefill && prefill.space && spaces.some(x=>x.id===prefill.space)) spaceSel.value=prefill.space;
+  if(prefill && prefill.date) overlay.querySelector('#evDate').value=prefill.date;
   spaceSel.onchange=applyRate; applyRate();
   overlay.querySelector('.close-x').onclick=()=>overlay.remove();
   overlay.querySelector('#evCancel').onclick=()=>overlay.remove();
@@ -1061,12 +1188,26 @@ function thankYouEventLetterModal(b, sp){
 
 // ---------- RESTAURANT ----------
 function renderRestaurant(main){
-  const open = ordersForCurrent().filter(o=>o.status==='open');
-  const closedToday = ordersForCurrent().filter(o=>o.status==='closed' && o.closedAt && o.closedAt.slice(0,10)===todayStr());
+  const all = ordersForCurrent();
+  const open = all.filter(o=>o.status==='open');
+  const t=todayStr();
+  const closedToday = all.filter(o=>o.status==='closed' && o.closedAt && o.closedAt.slice(0,10)===t);
+  const pending = all.filter(o=>o.status==='closed' && o.paymentStatus==='pending');
   const hasMenu = menuForCurrent().length>0;
+  const covers = open.reduce((a,o)=>a+(parseInt(o.covers)||1),0);
+  const openValue = open.reduce((a,o)=>a+orderTotals(o).grand,0);
+  const todayRev = closedToday.filter(o=>o.paymentStatus!=='pending').reduce((a,o)=>a+(o.total||orderTotals(o).grand),0);
   main.innerHTML = `
-    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
-      <div style="color:var(--ink-soft); font-size:13px;">${menuForCurrent().length} menu item${menuForCurrent().length===1?'':'s'} · ${closedToday.length} order${closedToday.length===1?'':'s'} settled today</div>
+    <div class="fd-summary">
+      <div class="fd-stat cb-confirmed"><span class="fd-dot"></span><b>${open.length}</b><small>Open order${open.length===1?'':'s'}</small></div>
+      <div class="fd-stat cb-billed"><span class="fd-dot"></span><b>${covers}</b><small>Covers seated</small></div>
+      <div class="fd-stat cb-unbilled"><span class="fd-dot"></span><b>${fmt(openValue)}</b><small>On open bills</small></div>
+      ${pending.length?`<div class="fd-stat cb-pending"><span class="fd-dot"></span><b>${pending.length}</b><small>Company bills due</small></div>`:''}
+      <div class="fd-stat info"><b>${closedToday.length}</b><small>Settled today</small></div>
+      <div class="fd-stat info revenue"><b>${fmt(todayRev)}</b><small>Restaurant revenue today</small></div>
+    </div>
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:6px;">
+      <div style="color:var(--ink-soft); font-size:13px;">${menuForCurrent().length} menu item${menuForCurrent().length===1?'':'s'}</div>
       <button class="primary" id="newOrderBtn" ${hasMenu?'':'disabled'}>+ New order</button>
     </div>
     ${!hasMenu ? `
@@ -1075,7 +1216,7 @@ function renderRestaurant(main){
         <p>Add this property's restaurant menu before taking orders.</p>
         <button class="primary" id="addMenuBtn" style="margin-top:10px;">Add menu items</button>
       </div>` : ''}
-    ${open.length ? `<div class="section-title">Open orders</div><div class="cards">${open.map(orderCardHTML).join('')}</div>` : (hasMenu ? `<div class="empty-state" style="margin-top:16px;"><h3>No open orders</h3><p>Start a new order when a table is seated.</p></div>` : '')}
+    ${open.length ? `<p class="floor-title">Open orders <span>· ${open.length}</span></p><div class="cb-grid">${open.map(orderCardHTML).join('')}</div>` : (hasMenu ? `<div class="fd-empty" style="margin-top:16px;"><b>No open orders</b><span>Start a new order when a table is seated.</span></div>` : '')}
   `;
   const newBtn=document.getElementById('newOrderBtn');
   if(newBtn) newBtn.onclick=openNewOrder;
@@ -1096,17 +1237,19 @@ function orderTotals(o){
 }
 function orderCardHTML(o){
   const t = orderTotals(o);
+  const n=(o.items||[]).reduce((a,i)=>a+(i.qty||1),0);
+  let since='';
+  if(o.createdAt){ const mins=Math.max(0,Math.round((Date.now()-new Date(o.createdAt))/60000)); since = mins<60 ? mins+' min' : Math.floor(mins/60)+' h '+(mins%60)+' min'; }
   return `
-    <div class="card restaurant" data-order="${o.id}">
-      <div class="top-row">
-        <div>
-          <div class="title">Table ${o.table||'—'}</div>
-          <div class="sub">${o.guestName||'Walk-in'} · ${o.covers||1} cover${(o.covers||1)===1?'':'s'}</div>
-        </div>
-        <span class="tag confirmed">open</span>
+    <button type="button" class="ecard confirmed" data-order="${o.id}" aria-label="Table ${escH(o.table||'')}, open order">
+      <div class="ecard-head">
+        <span class="ecard-title">Table ${escH(o.table||'—')}</span>
+        <span class="st-badge">Open</span>
       </div>
-      <div class="meta">${(o.items||[]).length} item${(o.items||[]).length===1?'':'s'} · ${fmt(t.grand)}</div>
-    </div>`;
+      <div class="ecard-venue">${escH(o.guestName||'Walk-in')} · ${o.covers||1} cover${(o.covers||1)==1?'':'s'}</div>
+      <div class="ecard-meta"><span>${n} item${n===1?'':'s'}</span><span>${since?'Open '+since:''}</span></div>
+      <div class="ecard-foot"><span>${escH(o.roomNumber?'Room '+o.roomNumber:'')}</span><b>${fmt(t.grand)}</b></div>
+    </button>`;
 }
 
 function openNewOrder(){
