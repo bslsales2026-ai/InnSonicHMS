@@ -18,12 +18,13 @@ Each front-desk page only holds its property settings (`BSL_PROPERTY`: name, flo
 default room blocks for first-time setup). Fixes to front-desk behaviour go in
 `shared/front-desk.js` once and apply to all three properties.
 
-## Test mode (current state)
-While `firebase-config.js` still holds the `YOUR_...` placeholders, every app runs in
-TEST MODE (orange bar at the bottom): data is saved in that browser only. Good for
-checking screens, NOT for real staff use.
+## Live mode (current state)
+`firebase-config.js` is linked to the Firebase project **InnSonicHMS** (`innsonichms`), so
+every app runs in live mode: staff sign in with email/password and data is shared through
+Firestore. If the config ever goes back to `YOUR_...` placeholders, the apps fall back to
+TEST MODE (orange bar; data saved in that browser only).
 
-## Go live (shared between all staff, ~15 minutes, free tier)
+## Firebase project setup (InnSonicHMS)
 1. console.firebase.google.com > Add project.
 2. Build > Firestore Database > Create database (production mode).
 3. Build > Authentication > Get started > enable Email/Password. Under Users, add one
