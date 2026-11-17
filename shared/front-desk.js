@@ -340,63 +340,137 @@ function pendingReceivablesTotal(){
     .reduce((s,b)=>s+(b.totalBill||0), 0);
 }
 
+// View state survives the re-render that every live data update triggers.
+const FD_STATUS = {
+  vacant:      {label:'Vacant',          badge:'Available'},
+  occupied:    {label:'Occupied',        badge:'Occupied'},
+  dirty:       {label:'Needs cleaning',  badge:'Cleaning'},
+  maintenance: {label:'Out of order',    badge:'Out of order'}
+};
+let fdView = {floor:'all', status:'all', q:''};
+try{ const v=JSON.parse(localStorage.getItem('fd_view_'+(window.BSL_PREFIX||''))||'null'); if(v){ fdView.floor=v.floor||'all'; fdView.status=v.status||'all'; } }catch(e){}
+function fdSaveView(){ try{ localStorage.setItem('fd_view_'+(window.BSL_PREFIX||''), JSON.stringify({floor:fdView.floor, status:fdView.status})); }catch(e){} }
+function fdEsc(v){ return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function fdShortDate(iso){ if(!iso) return ''; const d=new Date(iso+(iso.length===10?'T00:00:00':'')); return isNaN(d)?iso:d.toLocaleDateString('en-GB',{day:'numeric',month:'short'}); }
+
+function fdFloors(){
+  const map={};
+  rooms.forEach(r=>{
+    const key=r.floor||'Rooms';
+    if(!map[key]) map[key]={key, label:key, order:(r.floorOrder!==undefined?r.floorOrder:999), total:0};
+    map[key].total++;
+  });
+  return Object.values(map).sort((a,b)=>a.order-b.order || a.label.localeCompare(b.label));
+}
+function fdMatches(r){
+  if(fdView.floor!=='all' && (r.floor||'Rooms')!==fdView.floor) return false;
+  if(fdView.status!=='all' && r.status!==fdView.status) return false;
+  const q=fdView.q.trim().toLowerCase();
+  if(q){
+    const b = r.status==='occupied' ? activeBookingForRoom(r.number) : null;
+    const hay=[r.number, r.type, b&&b.guestName, b&&b.phone].join(' ').toLowerCase();
+    if(!hay.includes(q)) return false;
+  }
+  return true;
+}
+
 function renderDashboard(){
   const app=document.getElementById('app');
-  const c=roomStatusCounts();
-  const grouped={};
-  const floorOrders={};
-  rooms.slice().sort((a,b)=>a.number.localeCompare(b.number, undefined, {numeric:true}))
-    .forEach(r=>{
-      const f=r.floor || 'Rooms';
-      grouped[f]=grouped[f]||[];
-      grouped[f].push(r);
-      if(floorOrders[f]===undefined) floorOrders[f]=r.floorOrder!==undefined?r.floorOrder:999;
-    });
-  const floorKeys=Object.keys(grouped).sort((a,b)=>(floorOrders[a]-floorOrders[b]));
+  const floors=fdFloors();
+  // Only drop a remembered floor once rooms have loaded (the first render can run before data arrives).
+  if(rooms.length && fdView.floor!=='all' && !floors.some(f=>f.key===fdView.floor)) fdView.floor='all';
+  const active=document.activeElement, hadSearchFocus = active && active.id==='fdSearch';
+  const caret = hadSearchFocus ? active.selectionStart : null;
 
   app.innerHTML = `
-    <div class="topbar">
-      <div class="brand">
-        <h1>${BSL_PROPERTY.name}</h1>
-        <span>Front Desk · ${new Date().toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})} · ${currentUser}</span>
+    <div class="topbar fd-top">
+      <div class="fd-top-row">
+        <div class="brand">
+          <h1>${fdEsc(BSL_PROPERTY.name)}</h1>
+          <span>Front Desk · ${new Date().toLocaleDateString('en-GB',{weekday:'short', day:'numeric',month:'short',year:'numeric'})} · ${fdEsc(currentUser)}</span>
+        </div>
+        <div class="topbar-actions">
+          <button class="ghost" id="reservationsBtn">Reservations</button>
+          <button class="ghost" id="reportsBtn">Reports</button>
+          <button class="ghost" id="redetectBtn">Re-detect tower/floor</button>
+          <button class="ghost" id="editRoomsBtn">Edit rooms</button>
+        </div>
       </div>
-      <div class="stats">
-        <div class="stat vacant"><b>${c.vacant}</b><small>Vacant</small></div>
-        <div class="stat occupied"><b>${c.occupied}</b><small>Occupied</small></div>
-        <div class="stat dirty"><b>${c.dirty}</b><small>Needs cleaning</small></div>
-        <div class="stat revenue"><b>${fmt(todaysRevenue())}</b><small>Today's revenue</small></div>
-      </div>
-      <div class="topbar-actions">
-        <button class="ghost" id="reservationsBtn">Reservations</button>
-        <button class="ghost" id="reportsBtn">Reports</button>
-        <button class="ghost" id="redetectBtn">Re-detect tower/floor</button>
-        <button class="ghost" id="editRoomsBtn">Edit rooms</button>
+      <div class="fd-summary" id="fdSummary" role="group" aria-label="Filter rooms by status"></div>
+      <div class="fd-toolbar">
+        <div class="fd-tabs" id="fdTabs" role="tablist" aria-label="Floors"></div>
+        <input id="fdSearch" class="fd-search" type="search" placeholder="Find room, guest or phone…" value="${fdEsc(fdView.q)}" aria-label="Search rooms">
       </div>
     </div>
     <main>
-      ${floorKeys.map(f=>`
-        <div class="floor-group">
-          <p class="floor-title">${f}</p>
-          <div class="grid">
-            ${grouped[f].map(r=>roomCardHTML(r)).join('')}
-          </div>
-        </div>
-      `).join('')}
-      <p class="footnote">Click a vacant room to check in a guest, an occupied room to view the folio, or a room needing cleaning to mark it ready.</p>
+      <div id="fdFilterNote" class="fd-filter-note"></div>
+      <div id="fdGrid"></div>
+      <p class="footnote">Click an available room to check in, an occupied room to open the folio, or a room needing cleaning to mark it ready. Out-of-order rooms cannot be checked in until they are marked available.</p>
     </main>
   `;
-  rooms.forEach(r=>{
-    const el=document.getElementById('room-'+r.number);
-    if(el) el.onclick=()=>onRoomClick(r);
+  paintDashboard();
+
+  const search=document.getElementById('fdSearch');
+  search.oninput=()=>{ fdView.q=search.value; paintDashboard(); };
+  if(hadSearchFocus){ search.focus(); try{ search.setSelectionRange(caret,caret); }catch(e){} }
+
+  document.getElementById('editRoomsBtn').onclick=openManageRooms;
+  document.getElementById('redetectBtn').onclick=reDetectFloors;
+  document.getElementById('reservationsBtn').onclick=openReservations;
+  document.getElementById('reportsBtn').onclick=openReports;
+}
+
+// Repaints summary, tabs and grid from the current data and view state (no full rebuild).
+function paintDashboard(){
+  const c=roomStatusCounts(), total=rooms.length;
+  const occPct = total ? Math.round(c.occupied*100/total) : 0;
+  const sum=document.getElementById('fdSummary');
+  sum.innerHTML = Object.keys(FD_STATUS).map(k=>`
+      <button class="fd-stat ${k} ${fdView.status===k?'active':''}" data-status="${k}" aria-pressed="${fdView.status===k}">
+        <span class="fd-dot"></span><b>${c[k]}</b><small>${FD_STATUS[k].label}</small>
+      </button>`).join('') + `
+      <div class="fd-stat info"><b>${occPct}%</b><small>Occupancy</small></div>
+      <div class="fd-stat info revenue"><b>${fmt(todaysRevenue())}</b><small>Today's revenue</small></div>`;
+  sum.querySelectorAll('[data-status]').forEach(btn=>{
+    btn.onclick=()=>{ fdView.status = fdView.status===btn.dataset.status ? 'all' : btn.dataset.status; fdSaveView(); paintDashboard(); };
   });
-  const editBtn=document.getElementById('editRoomsBtn');
-  if(editBtn) editBtn.onclick=openManageRooms;
-  const redetectBtn=document.getElementById('redetectBtn');
-  if(redetectBtn) redetectBtn.onclick=reDetectFloors;
-  const reservationsBtn=document.getElementById('reservationsBtn');
-  if(reservationsBtn) reservationsBtn.onclick=openReservations;
-  const reportsBtn=document.getElementById('reportsBtn');
-  if(reportsBtn) reportsBtn.onclick=openReports;
+
+  const floors=fdFloors();
+  const tabs=document.getElementById('fdTabs');
+  const countFor=(key)=>rooms.filter(r=>(key==='all'||(r.floor||'Rooms')===key) && (fdView.status==='all'||r.status===fdView.status)).length;
+  tabs.innerHTML = [{key:'all', label:'All Floors'}].concat(floors).map(f=>`
+      <button class="fd-tab ${fdView.floor===f.key?'active':''}" role="tab" aria-selected="${fdView.floor===f.key}" data-floor="${fdEsc(f.key)}">
+        ${fdEsc(f.label)}<span class="fd-tab-count">${countFor(f.key)}</span>
+      </button>`).join('');
+  tabs.querySelectorAll('[data-floor]').forEach(btn=>{
+    btn.onclick=()=>{ fdView.floor=btn.dataset.floor; fdSaveView(); paintDashboard(); };
+  });
+  const activeTab=tabs.querySelector('.fd-tab.active'); if(activeTab && activeTab.scrollIntoView) activeTab.scrollIntoView({block:'nearest', inline:'nearest'});
+
+  const note=document.getElementById('fdFilterNote');
+  const parts=[];
+  if(fdView.status!=='all') parts.push(FD_STATUS[fdView.status].label);
+  if(fdView.q.trim()) parts.push('“'+fdEsc(fdView.q.trim())+'”');
+  note.innerHTML = parts.length ? `Showing: ${parts.join(' · ')} <button class="link" id="fdClear">Clear filters</button>` : '';
+  const clr=document.getElementById('fdClear');
+  if(clr) clr.onclick=()=>{ fdView.status='all'; fdView.q=''; fdSaveView(); const sI=document.getElementById('fdSearch'); if(sI) sI.value=''; paintDashboard(); };
+
+  const list=rooms.filter(fdMatches).sort((a,b)=>a.number.localeCompare(b.number, undefined, {numeric:true}));
+  const grid=document.getElementById('fdGrid');
+  if(!list.length){
+    grid.innerHTML = `<div class="fd-empty"><b>No rooms match</b><span>Try another floor or status, or clear the search.</span></div>`;
+    return;
+  }
+  if(fdView.floor==='all'){
+    grid.innerHTML = floors.map(f=>{
+      const rs=list.filter(r=>(r.floor||'Rooms')===f.key);
+      if(!rs.length) return '';
+      return `<section class="floor-group"><p class="floor-title">${fdEsc(f.label)} <span>${rs.length} room${rs.length===1?'':'s'}</span></p><div class="grid">${rs.map(roomCardHTML).join('')}</div></section>`;
+    }).join('');
+  } else {
+    grid.innerHTML = `<div class="grid">${list.map(roomCardHTML).join('')}</div>`;
+  }
+  list.forEach(r=>{ const el=document.getElementById('room-'+r.number); if(el) el.onclick=()=>onRoomClick(r); });
 }
 
 async function reDetectFloors(){
@@ -420,17 +494,33 @@ async function reDetectFloors(){
 }
 
 function roomCardHTML(r){
+  const st = FD_STATUS[r.status] ? r.status : 'maintenance';
   const b = r.status==='occupied' ? activeBookingForRoom(r.number) : null;
   const nextRes = nextUpcomingReservation(r.number);
+  let detail='';
+  if(b){
+    const t=todayStr(), out=b.checkOutPlanned;
+    const due = !out ? 'Check-out not set' : out<t ? `Overdue · was due ${fdShortDate(out)}` : out===t ? 'Due out today' : `Out ${fdShortDate(out)}`;
+    detail = `<div class="who" title="${fdEsc(b.guestName)}">${fdEsc(b.guestName)}</div><div class="when ${out&&out<=t?'due':''}">${due}</div>`;
+  } else if(r.status==='dirty'){
+    detail = `<div class="when">Awaiting housekeeping</div>`;
+  } else if(r.status==='maintenance'){
+    detail = `<div class="when">Check-in disabled</div>`;
+  } else if(r.status==='vacant'){
+    const rate = r.doubleRate!==undefined ? r.doubleRate : r.rate;
+    detail = rate ? `<div class="when">${fmt(rate)} / night</div>` : '';
+  }
+  const label = `Room ${r.number}, ${r.type||''}, ${FD_STATUS[st].label}${b?', guest '+b.guestName:''}`;
   return `
-    <div class="room ${r.status}" id="room-${r.number}">
-      ${nextRes ? `<div class="badge" title="${nextRes.guestName}">RES ${nextRes.checkInPlanned}</div>` : ''}
-      <div class="num">${r.number}</div>
-      <div class="type">${r.type}</div>
-      ${b ? `<div class="who">${b.guestName}</div>` : ''}
-      ${r.status==='dirty' ? `<div class="who">Housekeeping</div>` : ''}
-      ${r.status==='maintenance' ? `<div class="who">Out of service</div>` : ''}
-    </div>
+    <button type="button" class="room ${st}" id="room-${fdEsc(r.number)}" aria-label="${fdEsc(label)}">
+      <div class="room-head">
+        <span class="num">${fdEsc(r.number)}</span>
+        <span class="st-badge">${FD_STATUS[st].badge}</span>
+      </div>
+      <div class="type">${fdEsc(r.type||'')}</div>
+      ${detail}
+      ${nextRes ? `<div class="res" title="Reservation: ${fdEsc(nextRes.guestName)}">Reserved · ${fdShortDate(nextRes.checkInPlanned)}</div>` : ''}
+    </button>
   `;
 }
 
@@ -443,6 +533,7 @@ function onRoomClick(r){
 
 // ---------- CHECK-IN ----------
 function openCheckIn(r, resv){
+  if(r.status==='maintenance'){ showToast('Room '+r.number+' is out of order. Mark it available before checking in.'); return; }
   const overlay=document.createElement('div');
   overlay.className='overlay';
   overlay.innerHTML=`
