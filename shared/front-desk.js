@@ -2,7 +2,7 @@
    Each property page sets window.BSL_PREFIX and window.BSL_PROPERTY = {name, floorOptions, defaultBlocks, setupNote}
    before loading bsl-storage.js and this file. */
 let db=null, userCap=null, downloadsCap=null;
-let rooms=[], bookings=[], reservations=[], propertyMeta=null;
+let rooms=[], bookings=[], reservations=[], salesHolds=[], propertyMeta=null;
 let currentUser="Front Desk";
 
 async function initCapabilities(){
@@ -403,6 +403,7 @@ function renderDashboard(){
       </div>
     </div>
     <main>
+      <div id="fdSales"></div>
       <div id="fdFilterNote" class="fd-filter-note"></div>
       <div id="fdGrid"></div>
       <p class="footnote">Click an available room to check in, an occupied room to open the folio, or a room needing cleaning to mark it ready. Out-of-order rooms cannot be checked in until they are marked available.</p>
@@ -429,6 +430,7 @@ function paintDashboard(){
       <button class="fd-stat ${k} ${fdView.status===k?'active':''}" data-status="${k}" aria-pressed="${fdView.status===k}">
         <span class="fd-dot"></span><b>${c[k]}</b><small>${FD_STATUS[k].label}</small>
       </button>`).join('') + `
+      ${(()=>{ const t=todayStr(); const held=[...new Set(rooms.map(r=>r.type))].reduce((a,ty)=>a+remainingHeld(ty,t),0); return held?`<div class="fd-stat info held"><b>${held}</b><small>Held for sales tonight</small></div>`:''; })()}
       <div class="fd-stat info"><b>${occPct}%</b><small>Occupancy</small></div>
       <div class="fd-stat info revenue"><b>${fmt(todaysRevenue())}</b><small>Today's revenue</small></div>`;
   sum.querySelectorAll('[data-status]').forEach(btn=>{
@@ -447,6 +449,7 @@ function paintDashboard(){
   });
   const activeTab=tabs.querySelector('.fd-tab.active'); if(activeTab && activeTab.scrollIntoView) activeTab.scrollIntoView({block:'nearest', inline:'nearest'});
 
+  const sp=document.getElementById('fdSales'); if(sp) sp.innerHTML=salesPanelHTML();
   const note=document.getElementById('fdFilterNote');
   const parts=[];
   if(fdView.status!=='all') parts.push(FD_STATUS[fdView.status].label);
@@ -560,6 +563,8 @@ function openCheckIn(r, resv){
         <div class="field"><label>Expected checkout</label><input id="ciCheckout" type="date" value="${resv&&resv.checkOutPlanned?resv.checkOutPlanned:''}"></div>
         <div class="field"><label>Advance paid (BDT)</label><input id="ciAdvance" type="number" value="${resv?(resv.advance||0):0}"></div>
       </div>
+      ${(()=>{ const hs=salesHoldsOn(todayStr()).filter(h=>h.status!=='ooo').sort((a,b)=>(b.roomType===r.type)-(a.roomType===r.type));
+        return hs.length ? `<div class="field"><label>Sales hold / group (optional)</label><select id="ciHold"><option value="">Not part of a sales hold</option>${hs.map(h=>`<option value="${h.id}" ${resv&&resv.salesHoldId===h.id?'selected':''}>${fdEsc(h.client||SALES_LABEL[h.status])} — ${fdEsc(h.roomType)} · ${Math.max(0,(h.count||0)-holdPickedUp(h))} of ${h.count} left (${SALES_LABEL[h.status]}${h.repName?', '+fdEsc(h.repName):''})</option>`).join('')}</select></div>` : ''; })()}
       <div class="field"><label>Expected payment method (optional)</label>
         <select id="ciPayMethod">
           <option value="">Not decided yet</option>
@@ -602,6 +607,16 @@ function openCheckIn(r, resv){
     const company = overlay.querySelector('#ciCompany').value.trim();
     const po = overlay.querySelector('#ciPO').value.trim();
     if(payMethod==='credit' && (!company || !po)){ showToast('Company name and an authorization (PO) number are required for corporate billing'); return; }
+    const holdSel = overlay.querySelector('#ciHold');
+    const salesHoldId = holdSel && holdSel.value ? holdSel.value : null;
+    if(!salesHoldId){
+      // Guard against selling rooms that sales has already promised. The Front Desk can still override.
+      const t=todayStr(), freeOfType=rooms.filter(x=>x.type===r.type && x.status==='vacant').length, held=remainingHeld(r.type,t);
+      if(held>0 && freeOfType-held<=0){
+        const who=salesHoldsOn(t,r.type).filter(h=>h.status!=='ooo').map(h=>'• '+(h.client||SALES_LABEL[h.status])+': '+Math.max(0,(h.count||0)-holdPickedUp(h))+' held ('+SALES_LABEL[h.status]+(h.repName?', '+h.repName:'')+')').join('\n');
+        if(!(await customConfirm('All '+freeOfType+' vacant '+r.type+' room'+(freeOfType===1?' is':'s are')+' held by sales tonight:\n'+who+'\n\nIf this guest belongs to one of these groups, pick it under "Sales hold / group". Check in anyway?'))) return;
+      }
+    }
     if(!resv){
       const conflict = nextUpcomingReservation(r.number);
       if(conflict && !(await customConfirm('Room '+r.number+' has an upcoming reservation for '+conflict.guestName+' on '+conflict.checkInPlanned+'. Check in this guest anyway?'))) return;
@@ -627,7 +642,8 @@ function openCheckIn(r, resv){
       status:'active',
       charges:[],
       staffIn:currentUser,
-      fromReservation: resv ? resv.id : null
+      fromReservation: resv ? resv.id : null,
+      salesHoldId: salesHoldId
     };
     await db.doc('bookings/'+id).set(booking);
     await db.doc('rooms/'+r.number).update({status:'occupied'});
@@ -1339,6 +1355,40 @@ function openManageRooms(){
   };
 }
 
+// ---------- SALES HOLDS (read-only here; created in the Sales Control Chart) ----------
+// Holds reserve rooms by type. They never change a room's status; check-in stays with the Front Desk.
+const SALES_ACTIVE=['tentative','confirmed','blocked'];
+const SALES_LABEL={tentative:'Tentative', confirmed:'Confirmed', blocked:'Blocked', ooo:'Out of order'};
+function subscribeSalesHolds(){
+  db.collection('salesHolds').onSnapshot((snap)=>{ salesHolds=snap.docs.map(d=>({...d.data(), id:d.id})); render(); }, (e)=>{ /* sales module not used yet */ });
+}
+function fdAddDays(iso,n){ const d=new Date(iso+'T00:00:00'); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
+function salesHoldsOn(d, type){
+  return salesHolds.filter(h=>h.kind==='room' && SALES_ACTIVE.concat(['ooo']).includes(h.status) && h.from<=d && d<(h.to||fdAddDays(h.from,1)) && (!type || h.roomType===type));
+}
+function holdPickedUp(h){ return bookings.filter(b=>b.salesHoldId===h.id && b.status==='active').length; }
+function remainingHeld(type, d){
+  return salesHoldsOn(d,type).filter(h=>h.status!=='ooo').reduce((a,h)=>a+Math.max(0,(h.count||0)-holdPickedUp(h)),0);
+}
+function salesPanelHTML(){
+  const t=todayStr(), tm=fdAddDays(t,1);
+  const todayH=salesHoldsOn(t).filter(h=>h.status!=='ooo');
+  const arrivals=salesHolds.filter(h=>h.kind==='room' && SALES_ACTIVE.includes(h.status) && (h.from===t || h.from===tm));
+  const ooo=salesHoldsOn(t).filter(h=>h.status==='ooo');
+  if(!todayH.length && !arrivals.length && !ooo.length) return '';
+  const card=(h,arr)=>{ const pu=holdPickedUp(h), rem=Math.max(0,(h.count||0)-pu);
+    return `<div class="fd-hold h-${h.status}" title="${fdEsc(SALES_LABEL[h.status]+' hold by '+(h.repName||'sales')+(h.notes?' · '+h.notes:''))}">
+      <div class="fd-hold-top"><b>${fdEsc(h.client||SALES_LABEL[h.status])}</b><span class="fd-hold-badge">${SALES_LABEL[h.status]}</span></div>
+      <div class="fd-hold-what">${h.count} × ${fdEsc(h.roomType)}${arr?` · arrives ${h.from===t?'today':'tomorrow'}`:''}</div>
+      <div class="fd-hold-meta">${h.status==='ooo'?'Not for sale':`${pu} checked in · <b>${rem} still held</b>`}${h.repName?' · '+fdEsc(h.repName):''}</div>
+    </div>`; };
+  const arrIds=new Set(arrivals.map(h=>h.id));
+  return `<section class="fd-sales">
+    <p class="floor-title">Sales holds &amp; group arrivals <span>· from the Sales Control Chart · housekeeping: prepare rooms for arrivals</span></p>
+    <div class="fd-holds">${arrivals.map(h=>card(h,true)).join('')}${todayH.filter(h=>!arrIds.has(h.id)).map(h=>card(h,false)).join('')}${ooo.map(h=>card(h,false)).join('')}</div>
+  </section>`;
+}
+
 // ---------- BOOT ----------
 (async function boot(){
   document.getElementById('app').innerHTML = '<div style="padding:60px; text-align:center; color:var(--ink-soft);">Loading front desk…</div>';
@@ -1351,4 +1401,5 @@ function openManageRooms(){
   subscribeRooms();
   subscribeBookings();
   subscribeReservations();
+  subscribeSalesHolds();
 })();

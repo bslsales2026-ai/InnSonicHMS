@@ -131,7 +131,24 @@ function taxBreakdown(amount, category){
 }
 
 // ---------- SUBSCRIPTIONS ----------
+// Sales holds live in each property's front-desk data area (written by the Sales Control Chart).
+const SALES_PREFIX = window.BSL_SALES_PREFIXES || {rajendrapur:'raj_', savar:'svr_', bci:'bci_'};
+const SALES_ACTIVE = ['tentative','confirmed','blocked','ooo'];
+const SALES_LABEL = {tentative:'Tentative', confirmed:'Confirmed', blocked:'Blocked', ooo:'Out of order', released:'Released', converted:'Converted'};
+let salesHoldsByProp = {};
+function salesDbFor(propId){ return (db && db.prefixed && SALES_PREFIX[propId]) ? db.prefixed(SALES_PREFIX[propId]) : null; }
+function subscribeSalesHolds(){
+  Object.keys(SALES_PREFIX).forEach(pid=>{
+    const sdb=salesDbFor(pid); if(!sdb) return;
+    sdb.collection('salesHolds').onSnapshot(snap=>{ salesHoldsByProp[pid]=snap.docs.map(d=>({...d.data(), id:d.id})); render(); }, ()=>{});
+  });
+}
+function venueHolds(spaceId, day, shiftId){
+  return (salesHoldsByProp[currentProperty]||[]).filter(h=>h.kind==='venue' && h.venueId===spaceId && SALES_ACTIVE.includes(h.status)
+    && day>=h.from && day<=(h.to||h.from) && (!shiftId || h.shift==='all' || h.shift===shiftId));
+}
 function subscribeAll(){
+  subscribeSalesHolds();
   db.collection('spaces').onSnapshot((snap)=>{ spaces=snap.docs.map(d=>({...d.data(), id:d.id})); spacesLoaded=true; render(); autoSeedSpaces(); }, (e)=>showToast('Spaces sync error: '+e.code));
   db.collection('menuItems').onSnapshot((snap)=>{ menuItems=snap.docs.map(d=>({...d.data(), id:d.id})); render(); }, (e)=>showToast('Menu sync error: '+e.code));
   db.collection('eventBookings').onSnapshot((snap)=>{ eventBookings=snap.docs.map(d=>({...d.data(), id:d.id})); render(); }, (e)=>showToast('Bookings sync error: '+e.code));
@@ -681,9 +698,11 @@ function paintVenueBoard(list){
     const byShift={}; CB_SHIFTS.forEach(x=>byShift[x.id]=bs.filter(b=>bookingShifts(b).includes(x.id)));
     const other=bs.filter(b=>bookingShifts(b).length===0);
     const allDay = CB_SHIFTS.length>1 ? bs.filter(b=>bookingShifts(b).length===CB_SHIFTS.length) : [];
-    const free=CB_SHIFTS.filter(x=>!byShift[x.id].length);
+    const hAll=venueHolds(h.id, day).filter(x=>x.shift==='all');
+    const hBy={}; CB_SHIFTS.forEach(x=>hBy[x.id]=venueHolds(h.id, day, x.id).filter(y=>y.shift!=='all'));
+    const free=CB_SHIFTS.filter(x=>!byShift[x.id].length && !hBy[x.id].length && !hAll.length);
     const state = free.length===CB_SHIFTS.length && !other.length ? 'vacant' : (free.length===0 ? 'occupied' : 'partial');
-    return {h, byShift, other, free, state, allDay};
+    return {h, byShift, other, free, state, allDay, hAll, hBy};
   });
   const n={vacant:0, partial:0, occupied:0}; plan.forEach(p=>n[p.state]++);
   const tabs=document.getElementById('cbTabs');
@@ -706,17 +725,18 @@ function paintVenueBoard(list){
   const body=document.getElementById('cbBody');
   if(!shown.length){ body.innerHTML=`<div class="fd-empty"><b>No venues of this type</b></div>`; return; }
   const slotBtn=b=>`<button type="button" class="vslot" data-event="${b.id}"><b>${escH(b.clientName||'Booking')}</b><span>${escH(cbTimeRange(b)||'Whole day (no time set)')}${b.attendees?' · '+escH(b.attendees)+' guests':''}</span></button>`;
+  const holdBtn=x=>`<button type="button" class="vslot vhold sh-${x.status}" data-shold="${x.id}"><b>${escH(x.client||SALES_LABEL[x.status])}</b><span>Sales hold · ${SALES_LABEL[x.status]}${x.repName?' · '+escH(x.repName):''}</span></button>`;
   body.innerHTML = `<div class="grid vgrid">${plan.map(p=>{
     const badge = p.state==='vacant' ? 'Available' : p.state==='occupied' ? 'Booked' : escH(p.free.map(x=>x.label).join(' & '))+' free';
     return `<div class="room vcard ${p.state}">
       <div class="room-head"><span class="vname">${escH(p.h.name)}</span><span class="st-badge">${badge}</span></div>
       <div class="type">${escH(p.h.type||'')}${p.h.capacity?' · up to '+escH(p.h.capacity)+' guests':''} · ${fmt(p.h.rate)} per shift</div>
       <div class="vshifts">
-        ${p.allDay.length ? `<div class="vshift busy"><div class="vshift-label"><b>All day</b><span>${escH(CB_SHIFTS.map(x=>x.label).join(' + '))}</span></div><div class="vshift-body">${p.allDay.map(slotBtn).join('')}</div></div>` : ''}
-        ${CB_SHIFTS.map(x=>{ const bs=p.byShift[x.id].filter(b=>!p.allDay.includes(b)); if(p.allDay.length && !bs.length) return ''; return `
-          <div class="vshift ${bs.length?'busy':'free'}">
+        ${p.allDay.length||p.hAll.length ? `<div class="vshift busy"><div class="vshift-label"><b>All day</b><span>${escH(CB_SHIFTS.map(x=>x.label).join(' + '))}</span></div><div class="vshift-body">${p.allDay.map(slotBtn).join('')}${p.hAll.map(holdBtn).join('')}</div></div>` : ''}
+        ${CB_SHIFTS.map(x=>{ const bs=p.byShift[x.id].filter(b=>!p.allDay.includes(b)); const hs=p.hBy[x.id]; if((p.allDay.length||p.hAll.length) && !bs.length && !hs.length) return ''; return `
+          <div class="vshift ${bs.length||hs.length?'busy':'free'}">
             <div class="vshift-label"><b>${escH(x.label)}</b><span>${escH(cbShiftHours(x))}</span></div>
-            <div class="vshift-body">${bs.length ? bs.map(slotBtn).join('')
+            <div class="vshift-body">${bs.length||hs.length ? bs.map(slotBtn).join('')+hs.map(holdBtn).join('')
               : (past ? `<span class="vfree">Was free</span>` : `<span class="vfree">Free</span><button type="button" class="vbook" data-book="${p.h.id}" data-shift="${x.id}">+ Book</button>`)}</div>
           </div>`; }).join('')}
         ${p.other.length ? `<div class="vshift busy"><div class="vshift-label"><b>Other time</b><span>outside shifts</span></div><div class="vshift-body">${p.other.map(slotBtn).join('')}</div></div>` : ''}
@@ -724,6 +744,37 @@ function paintVenueBoard(list){
     </div>`; }).join('')}</div>`;
   body.querySelectorAll('[data-event]').forEach(el=>{ el.onclick=()=>{ const b=eventBookings.find(x=>x.id===el.dataset.event); if(b) openEventDetail(b); }; });
   body.querySelectorAll('[data-book]').forEach(el=>{ el.onclick=()=>{ const sh=CB_SHIFTS.find(x=>x.id===el.dataset.shift); openNewEventBooking({space:el.dataset.book, date:day, start:sh&&sh.start, end:sh&&sh.end}); }; });
+  body.querySelectorAll('[data-shold]').forEach(el=>{ el.onclick=()=>{ const x=(salesHoldsByProp[currentProperty]||[]).find(y=>y.id===el.dataset.shold); if(x) openSalesHold(x, day); }; });
+}
+
+// A sales hold on a venue: read-only details here, plus "create booking" for C&B staff.
+function openSalesHold(x, day){
+  const sp=spaces.find(s=>s.id===x.venueId);
+  const shift = x.shift==='all' ? null : CB_SHIFTS.find(s=>s.id===x.shift);
+  const canBook = x.status==='tentative' || x.status==='confirmed';
+  const overlay=document.createElement('div'); overlay.className='overlay';
+  overlay.innerHTML=`<div class="modal modal-wrap" style="max-width:440px;">
+    <button class="close-x">&times;</button>
+    <h2>${escH(x.client||SALES_LABEL[x.status])}</h2>
+    <div class="sub"><span class="vhold-tag sh-${x.status}">Sales hold · ${SALES_LABEL[x.status]}</span></div>
+    <div class="cb-hold-info">
+      <div><span>Venue</span><b>${escH(sp?sp.name:'')}</b></div>
+      <div><span>When</span><b>${escH(cbDateLabel(x.from))}${x.to&&x.to!==x.from?' – '+escH(cbDateLabel(x.to)):''} · ${shift?escH(shift.label+' '+cbShiftHours(shift)):'All day'}</b></div>
+      <div><span>Sales rep</span><b>${escH(x.repName||'—')}${x.teamName?' · '+escH(x.teamName):''}</b></div>
+      ${x.contact||x.phone?`<div><span>Contact</span><b>${escH([x.contact,x.phone].filter(Boolean).join(' · '))}</b></div>`:''}
+      ${x.status==='tentative'&&x.releaseDate?`<div><span>Release date</span><b>${escH(cbDateLabel(x.releaseDate))}</b></div>`:''}
+      ${x.notes?`<div><span>Notes</span><b>${escH(x.notes)}</b></div>`:''}
+    </div>
+    <p style="font-size:12.5px; color:var(--ink-soft); margin:10px 0 0;">Holds are managed in the Sales Control Chart. ${canBook?'Creating a booking turns this hold into a C&amp;B event.':''}</p>
+    <div class="modal-actions"><button class="ghost" id="shClose">Close</button>${canBook?'<button class="primary" id="shBook">Create booking from hold</button>':''}</div>
+  </div>`;
+  document.body.appendChild(overlay);
+  const close=()=>overlay.remove();
+  overlay.querySelector('.close-x').onclick=close; overlay.querySelector('#shClose').onclick=close;
+  overlay.addEventListener('click',e=>{ if(e.target===overlay) close(); });
+  const bk=overlay.querySelector('#shBook');
+  if(bk) bk.onclick=()=>{ close(); const sh=shift||{start:CB_SHIFTS[0].start, end:CB_SHIFTS[CB_SHIFTS.length-1].end};
+    openNewEventBooking({space:x.venueId, date:day||x.from, start:sh.start, end:sh.end, client:x.client, phone:x.phone, notes:'From sales hold'+(x.repName?' ('+x.repName+')':''), holdId:x.id, holdProp:currentProperty}); };
 }
 
 function openNewEventBooking(prefill){
@@ -788,6 +839,9 @@ function openNewEventBooking(prefill){
   if(prefill && prefill.date) overlay.querySelector('#evDate').value=prefill.date;
   if(prefill && prefill.start) overlay.querySelector('#evStart').value=prefill.start;
   if(prefill && prefill.end) overlay.querySelector('#evEnd').value=prefill.end;
+  if(prefill && prefill.client) overlay.querySelector('#evClient').value=prefill.client;
+  if(prefill && prefill.phone) overlay.querySelector('#evPhone').value=prefill.phone;
+  if(prefill && prefill.notes) overlay.querySelector('#evNotes').value=prefill.notes;
   spaceSel.onchange=applyRate; applyRate();
   overlay.querySelector('.close-x').onclick=()=>overlay.remove();
   overlay.querySelector('#evCancel').onclick=()=>overlay.remove();
@@ -807,9 +861,11 @@ function openNewEventBooking(prefill){
     if(payMethod==='credit' && (!company || !po)){ showToast('Company name and an authorization (PO) number are required for corporate billing'); return; }
     const draft={space:spaceSel.value, eventDate, startTime:overlay.querySelector('#evStart').value||'', endTime:overlay.querySelector('#evEnd').value||''};
     const clash=eventBookings.filter(x=>x.space===draft.space && x.eventDate===eventDate && evState(x)!=='cancelled' && bookingsOverlap(x,draft));
-    if(clash.length){
+    const dShifts=bookingShifts(draft);
+    const holdClash=venueHolds(draft.space, eventDate).filter(h=>!(prefill&&prefill.holdId===h.id) && (h.shift==='all' || dShifts.includes(h.shift)));
+    if(clash.length || holdClash.length){
       const hall=(spaces.find(x=>x.id===draft.space)||{}).name||'This hall';
-      const lines=clash.map(x=>'• '+(x.clientName||'Booking')+' ('+(cbTimeRange(x)||'whole day')+')').join('\n');
+      const lines=clash.map(x=>'• '+(x.clientName||'Booking')+' ('+(cbTimeRange(x)||'whole day')+')').concat(holdClash.map(h=>'• Sales hold: '+(h.client||SALES_LABEL[h.status])+' ('+SALES_LABEL[h.status]+(h.repName?', '+h.repName:'')+')')).join('\n');
       if(!(await customConfirm(hall+' is already booked at that time on '+eventDate+':\n'+lines+'\n\nSave this booking anyway?'))) return;
     }
     const btn=overlay.querySelector('#evSubmit'); btn.disabled=true; btn.textContent='Saving…';
@@ -827,8 +883,19 @@ function openNewEventBooking(prefill){
       expectedBillToCompany: payMethod==='credit' ? company : null,
       expectedBillRef: payMethod==='credit' ? po : null,
       notes:overlay.querySelector('#evNotes').value.trim(),
-      charges:[], status:'confirmed', createdBy:currentUser, createdAt:new Date().toISOString()
+      charges:[], status:'confirmed', createdBy:currentUser, createdAt:new Date().toISOString(),
+      salesHoldId: prefill&&prefill.holdId ? prefill.holdId : null
     });
+    if(prefill && prefill.holdId){
+      // Tell the Sales Control Chart: a single-day hold is now converted; a longer one keeps its other days.
+      const sdb=salesDbFor(prefill.holdProp||currentProperty);
+      const h=(salesHoldsByProp[prefill.holdProp||currentProperty]||[]).find(x=>x.id===prefill.holdId);
+      if(sdb && h){
+        const now=new Date().toISOString(); const single = (h.to||h.from)===h.from;
+        const hist=(h.history||[]).concat([{at:now, by:currentUser, action: single ? 'Converted to C&B booking' : 'C&B booking created for '+eventDate}]).slice(-30);
+        try{ await sdb.doc('salesHolds/'+h.id).update(single ? {status:'converted', bookingId:id, updatedAt:now, updatedBy:currentUser, history:hist} : {history:hist, updatedAt:now}); }catch(e){ showToast('Booking saved, but the sales hold could not be updated'); }
+      }
+    }
     showToast('Booking saved');
     overlay.remove();
   };

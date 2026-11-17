@@ -271,3 +271,15 @@
     .cb-grid, .grid.vgrid{grid-template-columns:1fr;}
     .cb-daysum{margin-left:0; width:100%;}
   }
+
+  /* Sales holds on the venue board (managed in the Sales Control Chart) */
+  .vhold{--c:#B7791F; background:#FFF3D6; border-left-style:dashed;}
+  .vhold.sh-confirmed{--c:#2B5CA8; background:#E6EEFB;} .vhold.sh-blocked{--c:#7A4FB0; background:#F1EAFB;} .vhold.sh-ooo{--c:#5B6573; background:#ECEEF1;}
+  [data-theme="dark"] .vhold{--c:#F2B84B; background:#33270F;} [data-theme="dark"] .vhold.sh-confirmed{--c:#8DB3F2; background:#17243A;} [data-theme="dark"] .vhold.sh-blocked{--c:#C3A6EE; background:#271D36;} [data-theme="dark"] .vhold.sh-ooo{--c:#A9B1BD; background:#23262C;}
+  @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .vhold{--c:#F2B84B; background:#33270F;} :root:not([data-theme="light"]) .vhold.sh-confirmed{--c:#8DB3F2; background:#17243A;} :root:not([data-theme="light"]) .vhold.sh-blocked{--c:#C3A6EE; background:#271D36;} :root:not([data-theme="light"]) .vhold.sh-ooo{--c:#A9B1BD; background:#23262C;} }
+  .vhold span{color:var(--c) !important; font-weight:600;}
+  .vhold-tag{display:inline-block; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; padding:3px 8px; border-radius:20px; border:1px solid #B7791F; color:#B7791F;}
+  .vhold-tag.sh-confirmed{border-color:#2B5CA8; color:#2B5CA8;} .vhold-tag.sh-blocked{border-color:#7A4FB0; color:#7A4FB0;} .vhold-tag.sh-ooo{border-color:#5B6573; color:#5B6573;}
+  .cb-hold-info{display:flex; flex-direction:column; gap:8px; margin-top:14px;}
+  .cb-hold-info div{display:grid; grid-template-columns:100px 1fr; gap:8px; font-size:13.5px;}
+  .cb-hold-info span{color:var(--ink-soft);}

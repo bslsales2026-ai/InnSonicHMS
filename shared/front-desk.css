@@ -237,3 +237,16 @@
     #printArea{position:absolute; top:0; left:0; width:100%; padding:20px;}
   }
   #printArea{display:none;}
+
+  /* ---- Sales holds panel (data from the Sales Control Chart) ---- */
+  .fd-sales{margin-bottom:22px;}
+  .fd-holds{display:grid; grid-template-columns:repeat(auto-fill, minmax(230px,1fr)); gap:10px;}
+  .fd-hold{--hc:#B7791F; --hb:#FFF3D6; background:var(--hb); border:1px solid color-mix(in srgb, var(--hc) 35%, transparent); border-left:4px solid var(--hc); border-radius:10px; padding:10px 12px; display:flex; flex-direction:column; gap:3px;}
+  .fd-hold.h-confirmed{--hc:#2B5CA8; --hb:#E6EEFB;} .fd-hold.h-blocked{--hc:#7A4FB0; --hb:#F1EAFB;} .fd-hold.h-ooo{--hc:#5B6573; --hb:#ECEEF1;}
+  [data-theme="dark"] .fd-hold{--hb:#33270F;} [data-theme="dark"] .fd-hold.h-confirmed{--hc:#8DB3F2; --hb:#17243A;} [data-theme="dark"] .fd-hold.h-blocked{--hc:#C3A6EE; --hb:#271D36;} [data-theme="dark"] .fd-hold.h-ooo{--hc:#A9B1BD; --hb:#23262C;}
+  @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .fd-hold{--hc:#F2B84B; --hb:#33270F;} :root:not([data-theme="light"]) .fd-hold.h-confirmed{--hc:#8DB3F2; --hb:#17243A;} :root:not([data-theme="light"]) .fd-hold.h-blocked{--hc:#C3A6EE; --hb:#271D36;} :root:not([data-theme="light"]) .fd-hold.h-ooo{--hc:#A9B1BD; --hb:#23262C;} }
+  .fd-hold-top{display:flex; justify-content:space-between; gap:8px; align-items:flex-start;}
+  .fd-hold-top b{font-size:14px;}
+  .fd-hold-badge{flex:none; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; padding:2px 7px; border-radius:20px; background:var(--hc); color:var(--panel);}
+  .fd-hold-what{font-size:12.5px;} .fd-hold-meta{font-size:12px; color:var(--ink-soft);}
+  .fd-stat.held b{color:#2B5CA8;}

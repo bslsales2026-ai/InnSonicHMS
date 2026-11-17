@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sales Control Chart — BCDM Savar</title>
+<link rel="stylesheet" href="shared/fonts.css?v=20261117c">
+<link rel="stylesheet" href="shared/front-desk.css?v=20261117k">
+<link rel="stylesheet" href="shared/sales.css?v=20261117k">
+</head>
+<body>
+<div id="app"></div>
+<div id="toast" class="toast"></div>
+
+<script src="firebase-config.js?v=20261117f" onerror="void 0"></script>
+<script>
+// Savar's front-desk data area: sales holds are stored beside the rooms they hold.
+window.BSL_PREFIX = 'svr_';
+window.BSL_PROPERTY = { id: 'savar', name: 'BCDM Savar', venuesPrefix: 'venues_' };
+// First-run defaults (edit later under "Reps & teams" in the app). Reps are the names
+// used in the 2026 control-chart sheet; teams start empty for you to assign.
+window.BSL_SALES = {
+  teams: ['Sales 1', 'Sales 2', 'Sales 3'],
+  reps: ['Ashraful', 'Anik', 'Pallab', 'Subrata']
+};
+// Same venue shifts as the C&B venue board (M = Shift 1, E = Shift 2 on the paper chart).
+window.BSL_VENUE_SHIFTS = [
+  {id:'s1', label:'Shift 1', short:'M', start:'09:00', end:'17:00'},
+  {id:'s2', label:'Shift 2', short:'E', start:'18:00', end:'23:00'}
+];
+</script>
+<script src="shared/bsl-storage.js?v=20261117k"></script>
+<script src="shared/sales.js?v=20261117k"></script>
+</body>
+</html>

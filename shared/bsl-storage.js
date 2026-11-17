@@ -18,8 +18,11 @@
   var btnStyle='width:100%;padding:11px;background:#1C2230;color:#fff;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;';
 
   /* ---------- Test mode (localStorage) ---------- */
-  function localDb(){
-    var KEY='bsl_local_'+PREFIX, listeners={};
+  var localCache={};
+  function localDb(pfx){
+    pfx = pfx || PREFIX;
+    if(localCache[pfx]) return localCache[pfx];
+    var KEY='bsl_local_'+pfx, listeners={};
     function load(){ try{ return JSON.parse(localStorage.getItem(KEY)||'{}'); }catch(e){ return {}; } }
     function save(d){ localStorage.setItem(KEY, JSON.stringify(d)); }
     function clone(x){ return x===undefined?undefined:JSON.parse(JSON.stringify(x)); }
@@ -31,7 +34,9 @@
     window.addEventListener('storage',function(e){ if(e.key===KEY) Object.keys(listeners).forEach(notify); });
     function split(path){ var i=path.indexOf('/'); return [path.slice(0,i), path.slice(i+1)]; }
     function strip(o){ return clone(o); }
-    return {
+    return localCache[pfx] = {
+      /* Same store, another app's data area (e.g. 'venues_' or 'svr_'). */
+      prefixed:function(p){ return localDb(p); },
       collection:function(name){ return {
         onSnapshot:function(ok){ (listeners[name]=listeners[name]||[]).push(ok); setTimeout(function(){ok(snapFor(name));},0); return function(){}; }
       };},
@@ -113,12 +118,15 @@
       });
     }).then(function(fdb){
       function split(path){ var i=path.indexOf('/'); return [path.slice(0,i), path.slice(i+1)]; }
-      return {
-        collection:function(name){ return { onSnapshot:function(ok,err){ return fdb.collection(PREFIX+name).onSnapshot(ok,err); } }; },
-        doc:function(path){ var p=split(path); var r=fdb.collection(PREFIX+p[0]).doc(p[1]); return {
+      function wrap(pfx){ return {
+        /* Same Firestore project, another app's data area (e.g. 'venues_' or 'svr_'). */
+        prefixed:function(p){ return wrap(p); },
+        collection:function(name){ return { onSnapshot:function(ok,err){ return fdb.collection(pfx+name).onSnapshot(ok,err); } }; },
+        doc:function(path){ var p=split(path); var r=fdb.collection(pfx+p[0]).doc(p[1]); return {
           get:function(){ return r.get(); }, set:function(d){ return r.set(d); }, update:function(d){ return r.update(d); }, delete:function(){ return r.delete(); }
         };}
-      };
+      }; }
+      return wrap(PREFIX);
     });
   }
 
