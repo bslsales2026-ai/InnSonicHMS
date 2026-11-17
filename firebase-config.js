@@ -12,10 +12,10 @@
  * protected by Firebase Authentication plus the Firestore rules in README.md.
  */
 window.BSL_FIREBASE = {
-  apiKey: "AIzaSyDE5bVW02bh3jgE-BU0t5K2bo1yWi3QQ90",
+  apiKey: "AIzaSyDE5bVW02bh3jgE-BU0t5k2bo1yWi3QQ90",
   authDomain: "innsonichms.firebaseapp.com",
   projectId: "innsonichms",
-  storageBucket: "innsonichms.appspot.com",
+  storageBucket: "innsonichms.firebasestorage.app",
   messagingSenderId: "154848302859",
   appId: "1:154848302859:web:8c60e269eea07bbfee740e",
   measurementId: "G-7C404BQ021" // Google Analytics ID; the apps do not load Analytics
